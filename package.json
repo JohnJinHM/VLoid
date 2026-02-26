@@ -1,0 +1,24 @@
+{
+  "name": "vloid",
+  "version": "1.0.0",
+  "description": "A local AI assistant featuring real-time screen perception and instant voice feedback.",
+  "homepage": "https://github.com/JohnJinHM/VLoid#readme",
+  "bugs": {
+    "url": "https://github.com/JohnJinHM/VLoid/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JohnJinHM/VLoid.git"
+  },
+  "license": "MIT",
+  "author": "John Jin",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "electron": "^40.6.1"
+  }
+}
