@@ -1,0 +1,14 @@
+system:
+  wsl_distro: "Ubuntu"
+  project_dir: ""
+
+vllm:
+  model: "cyankiwi/Qwen3.5-35B-A3B-AWQ-4bit"
+  host: "0.0.0.0"
+  port: 8000
+  tensor_parallel_size: 1
+  max_model_len: 32768
+  gpu_memory_utilization: 0.8
+
+webui:
+  enabled: true
