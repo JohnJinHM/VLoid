@@ -27,7 +27,9 @@ class BaseModule(ABC):
             stdout=subprocess.PIPE, 
             stderr=subprocess.STDOUT, # Merge stderr into stdout
             text=True, 
-            bufsize=1
+            bufsize=1,
+            encoding="utf-8",
+            errors="replace"
         )
 
         # Start a daemon thread to read logs continuously

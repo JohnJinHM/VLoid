@@ -156,3 +156,5 @@ vite.config.ts.timestamp-*
 
 configs/local_config.yaml
 .webui_secret_key
+
+*.gguf

@@ -1,11 +1,20 @@
+inference_engine: "llama_cpp"
+port: 8000
+
 system:
   wsl_distro: "Ubuntu"
   project_dir: ""
 
+llama_cpp:
+  model_path: ""
+  host: "127.0.0.1"
+  n_gpu_layers: -1
+  ctx_size: 32768
+  n_threads: 8
+
 vllm:
-  model: "cyankiwi/Qwen3.5-35B-A3B-AWQ-4bit"
+  model: ""
   host: "0.0.0.0"
-  port: 8000
   tensor_parallel_size: 1
   max_model_len: 32768
   gpu_memory_utilization: 0.8

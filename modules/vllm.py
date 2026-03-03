@@ -21,14 +21,14 @@ class VLLMModule(BaseModule):
             f"--gpu-memory-utilization {vllm_cfg['gpu_memory_utilization']} "
             f"--enforce-eager "
             f"--host {vllm_cfg['host']} "
-            f"--port {vllm_cfg['port']}"
+            f"--port {sys_cfg['port']}"
         )
         
         full_cmd = f'wsl -d {sys_cfg["wsl_distro"]} bash -ic "{vllm_cmd}"'
         self.run_subprocess(full_cmd)
         
         # Health check
-        health_url = f"http://127.0.0.1:{vllm_cfg['port']}/health"
+        health_url = f"http://127.0.0.1:{sys_cfg['port']}/health"
         self.logger.info("Waiting for vLLM startup...")
         
         while True:

@@ -17,6 +17,7 @@ class ColorFormatter(logging.Formatter):
     COLORS = {
         "System": "\033[96m",  # Cyan
         "vLLM": "\033[92m",    # Green
+        "llama.cpp": "\033[94m", # Blue
         "WebUI": "\033[95m",   # Magenta
         "WARNING": "\033[93m", # Yellow
         "ERROR": "\033[91m",   # Red

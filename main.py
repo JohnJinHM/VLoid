@@ -3,6 +3,7 @@ from core.config import load_config
 from core.logger import get_logger
 from modules.vllm import VLLMModule
 from modules.open_webui import WebUIModule
+from modules.llama_cpp import LlamaCppModule
 
 def main():
     logger = get_logger("System")
@@ -12,10 +13,18 @@ def main():
     active_modules = []
     
     try:
-
-        vllm = VLLMModule(config)
-        vllm.start()
-        active_modules.append(vllm)
+        engine_type = config.get("inference_engine", "llama_cpp")
+        
+        if engine_type == "vllm":
+            engine = VLLMModule(config)
+        elif engine_type == "llama_cpp":
+            engine = LlamaCppModule(config)
+        else:
+            logger.error(f"Unknown engine type: {engine_type}")
+            return
+        
+        engine.start()
+        active_modules.append(engine)
         
         if config.get("webui", {}).get("enabled", False):
             webui = WebUIModule(config)
