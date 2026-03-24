@@ -48,6 +48,7 @@ class LLMService:
             "messages": [{"role": m.role, "content": m.content} for m in request.messages],
             "temperature": request.temperature,
             "top_p": request.top_p,
+            "presence_penalty": request.repetition_penalty,
             "max_tokens": request.max_tokens,
             "stream": True
         }

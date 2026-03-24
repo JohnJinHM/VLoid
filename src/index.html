@@ -4,15 +4,15 @@
 <head>
   <meta charset="UTF-8">
   <title>Local AI Assistant</title>
-  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="styles.css">
 </head>
 
 <body>
   <div class="app-container">
     <aside class="sidebar-left">
-      <button id="new-chat-btn">+ New Chat</button>
+      <button id="new-chat-btn">✨ New Chat</button>
       <div class="session-list" id="session-list">
-        <div class="session-item active">Default Session</div>
+        <div class="session-item active" id="default-session">💬 Default Session</div>
       </div>
       <div class="memory-zone">
         <h3>Memory Bank</h3>
@@ -22,11 +22,13 @@
 
     <main class="chat-area">
       <div class="message-container" id="message-container">
-        <div class="message system">Hello! I am your local AI. How can I help you?</div>
       </div>
       <div class="input-area">
         <textarea id="user-input" placeholder="Type a message... (Shift+Enter to new line, Enter to send)"></textarea>
-        <button id="send-btn">Send</button>
+        <div class="action-buttons">
+          <button id="send-btn">Send</button>
+          <button id="stop-btn" class="hidden">Stop ⏹</button>
+        </div>
       </div>
     </main>
 
@@ -36,17 +38,34 @@
         <label>System Prompt:</label>
         <textarea id="sys-prompt" rows="4">You are a helpful, smart, kind, and efficient AI assistant.</textarea>
       </div>
+
+      <div class="divider"></div>
+
       <div class="param-group">
         <label>Temperature: <span id="temp-val">0.7</span></label>
         <input type="range" id="temp-slider" min="0" max="2" step="0.1" value="0.7">
       </div>
       <div class="param-group">
+        <label>Top-P: <span id="topp-val">0.9</span></label>
+        <input type="range" id="topp-slider" min="0.1" max="1.0" step="0.05" value="0.9">
+      </div>
+      <div class="param-group">
+        <label>Repetition Penalty: <span id="rep-val">1.1</span></label>
+        <input type="range" id="rep-slider" min="0" max="2" step="0.1" value="1.1">
+      </div>
+      <div class="param-group">
         <label>Max Tokens: <span id="tokens-val">2048</span></label>
         <input type="range" id="tokens-slider" min="256" max="8192" step="256" value="2048">
       </div>
+
+      <div class="divider"></div>
+
       <div class="param-group switch-group">
-        <label>Enable RAG</label>
-        <input type="checkbox" id="rag-toggle">
+        <label>Enable RAG 📚</label>
+        <label class="switch">
+          <input type="checkbox" id="rag-toggle">
+          <span class="slider round"></span>
+        </label>
       </div>
     </aside>
   </div>

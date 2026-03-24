@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional, Dict, Any
+from datetime import datetime
 
 class Message(BaseModel):
     role: str # 'system', 'user', 'assistant'
@@ -23,3 +24,16 @@ class ChatResponse(BaseModel):
     session_id: str
     message: Message
     usage: Optional[Dict[str, int]] = None
+    
+class SessionInfo(BaseModel):
+    id: str
+    title: str
+    created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True) # 允许从 SQLAlchemy ORM 模型自动转换
+
+class MessageInfo(BaseModel):
+    role: str
+    content: str
+    
+    model_config = ConfigDict(from_attributes=True)

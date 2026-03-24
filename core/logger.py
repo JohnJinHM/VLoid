@@ -21,6 +21,8 @@ class ColorFormatter(logging.Formatter):
         "WebUI": "\033[95m",   # Magenta
         "WARNING": "\033[93m", # Yellow
         "ERROR": "\033[91m",   # Red
+        "LLMService": "\033[95m", # Magenta
+        "ApiServer": "\033[96m", # Cyan
         "RESET": "\033[0m"
     }
 
