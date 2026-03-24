@@ -158,3 +158,4 @@ configs/local_config.yaml
 .webui_secret_key
 
 *.gguf
+*.safetensors

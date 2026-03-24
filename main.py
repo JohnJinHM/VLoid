@@ -4,6 +4,7 @@ from core.logger import get_logger
 from modules.vllm import VLLMModule
 from modules.open_webui import WebUIModule
 from modules.llama_cpp import LlamaCppModule
+from modules.api_server import ApiServerModule
 
 def main():
     logger = get_logger("System")
@@ -26,10 +27,13 @@ def main():
         engine.start()
         active_modules.append(engine)
         
-        if config.get("webui", {}).get("enabled", False):
+        if config.get("open-webui", {}).get("enabled", False):
             webui = WebUIModule(config)
             webui.start()
             active_modules.append(webui)
+        else:
+            ApiServerModule(config).start()
+            active_modules.append(ApiServerModule(config))
 
         logger.info("="*40)
         logger.info("🚀 All systems ready. Type 'exit' to terminate.")

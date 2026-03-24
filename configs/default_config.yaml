@@ -1,23 +1,26 @@
 inference_engine: "llama_cpp"
-port: 8000
 
 system:
   wsl_distro: "Ubuntu"
-  project_dir: ""
+  project_dir: "C:/Projects/VLoid"
+  # project_dir: "/home/jinha/VLoid"
 
 llama_cpp:
-  model_path: ""
+  model_path: "./models/llm/Qwen3.5-9B-Q4_K_M.gguf"
   host: "127.0.0.1"
+  port: 8080
   n_gpu_layers: -1
   ctx_size: 32768
   n_threads: 8
+  mmproj_path: "./models/llm/Qwen3.5-9B-mmproj-BF16.gguf"
 
 vllm:
-  model: ""
+  model: "cyankiwi/Qwen3.5-35B-A3B-AWQ-4bit"
   host: "0.0.0.0"
+  port: 8080
   tensor_parallel_size: 1
   max_model_len: 32768
-  gpu_memory_utilization: 0.8
+  gpu_memory_utilization: 0.9
 
-webui:
-  enabled: true
+open-webui:
+  enabled: false
