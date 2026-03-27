@@ -1,3 +1,5 @@
+import { CharacterCard } from "https://esm.run/@lenml/char-card-reader";
+
 const API_BASE = "http://127.0.0.1:3000";
 let currentSessionId = null;
 let sessionsData = {}; 
@@ -57,6 +59,10 @@ const api = {
     async getMessages(sessionId) {
         const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/messages`);
         return res.json();
+    },
+    async deleteSession(sessionId) {
+        const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, { method: 'DELETE' });
+        return res.json();
     }
 };
 
@@ -91,16 +97,56 @@ function appendMessageToUI(role, content) {
 
 // 1. 渲染左侧会话列表
 function renderSessionList() {
-    sessionList.innerHTML = ''; // 清空列表
-    // 将对象转为数组并按创建时间倒序（因为 session_id 包含了时间戳）
+    sessionList.innerHTML = '';
     const sortedSessions = Object.entries(sessionsData).sort((a, b) => b[0].localeCompare(a[0]));
 
     for (const [id, session] of sortedSessions) {
         const div = document.createElement('div');
         div.className = `session-item ${id === currentSessionId ? 'active' : ''}`;
-        div.textContent = session.title;
+
+        const titleSpan = document.createElement('span');
+        titleSpan.textContent = session.title;
+        div.appendChild(titleSpan);
+
+        // 新增删除按钮
+        const delBtn = document.createElement('button');
+        delBtn.className = 'delete-session-btn';
+        delBtn.innerHTML = '🗑️';
+        delBtn.title = 'Delete Session';
+
+        // 绑定删除事件
+        delBtn.addEventListener('click', async (e) => {
+            e.stopPropagation(); // 阻止触发切换会话
+            if (confirm(`Are you sure you want to delete "${session.title}"?`)) {
+                await deleteChatSession(id);
+            }
+        });
+
+        div.appendChild(delBtn);
         div.addEventListener('click', () => switchSession(id));
         sessionList.appendChild(div);
+    }
+}
+
+async function deleteChatSession(sessionId) {
+    try {
+        await api.deleteSession(sessionId);
+        delete sessionsData[sessionId]; // 本地移除
+
+        // 如果删除的是当前处于激活状态的会话，需要切换到另一个
+        if (currentSessionId === sessionId) {
+            const remainingKeys = Object.keys(sessionsData);
+            if (remainingKeys.length > 0) {
+                await switchSession(remainingKeys[0]);
+            } else {
+                createNewSession(); // 全删光了，新建一个
+            }
+        } else {
+            renderSessionList(); // 仅刷新列表
+        }
+    } catch (error) {
+        console.error("Failed to delete session:", error);
+        alert("Error deleting session.");
     }
 }
 
@@ -152,7 +198,7 @@ function createNewSession() {
 
     // 此时仅在前端创建状态，不发请求。等用户发送第一条消息时，后端路由会自动落盘创建记录。
     sessionsData[newId] = {
-        title: `💬 New Chat ${timeStr}`,
+        title: `New Chat ${timeStr}`,
         messages: []
     };
 
@@ -259,3 +305,80 @@ async function sendMessage() {
         abortController = null;
     }
 }
+
+const memoryModal = document.getElementById('memory-modal');
+const openMemoryBtn = document.getElementById('open-memory-btn');
+const closeMemoryBtn = document.getElementById('close-memory-btn');
+const charFileInput = document.getElementById('char-file');
+const charPreview = document.getElementById('char-preview');
+const applyCharBtn = document.getElementById('apply-char-btn');
+let loadedCharacter = null; // 暂存读取到的角色数据
+
+openMemoryBtn.addEventListener('click', () => memoryModal.classList.remove('hidden'));
+closeMemoryBtn.addEventListener('click', () => memoryModal.classList.add('hidden'));
+
+// 处理文件上传解析
+charFileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    try {
+        let card = null;
+        if (file.type.startsWith("image/")) {
+            const arrayBuffer = await file.arrayBuffer();
+            card = await CharacterCard.from_file(arrayBuffer);
+        } else if (file.type === "application/json") {
+            const jsonText = await file.text();
+            const jsonData = JSON.parse(jsonText);
+            card = CharacterCard.from_json(jsonData);
+        }
+
+        if (card) {
+            // 提取 V3 标准数据以供渲染
+            loadedCharacter = card.toSpecV3();
+
+            // 更新 UI
+            document.getElementById('char-name').textContent = loadedCharacter.data.name;
+            document.getElementById('char-desc').value = loadedCharacter.data.description || 'No description provided.';
+
+            // 简单处理：如果是图片文件，直接本地预览头像
+            if (file.type.startsWith("image/")) {
+                document.getElementById('char-avatar').src = URL.createObjectURL(file);
+            }
+
+            charPreview.classList.remove('hidden');
+            applyCharBtn.classList.remove('hidden');
+        }
+    } catch (err) {
+        console.error("Failed to parse character card:", err);
+        alert("Failed to read Character Card. Ensure it is a valid SillyTavern file.");
+    }
+});
+
+// 应用角色卡到当前 Prompt
+    applyCharBtn.addEventListener('click', () => {
+    if (!loadedCharacter) return;
+    const charData = loadedCharacter.data;
+
+    // 组装 System Prompt (SillyTavern 常用格式)
+    const newSystemPrompt = `You are playing the character of ${charData.name}.
+        Description: ${charData.description || ''}
+        Personality: ${charData.personality || ''}
+        Scenario: ${charData.scenario || ''}
+        Always stay in character.`;
+
+    // 填入右侧的参数面板
+    sysPromptInput.value = newSystemPrompt;
+
+    createNewSession();
+
+    // 如果角色卡有 First Message，让它成为新开会话的第一句话
+    if (charData.first_mes) {
+        appendMessageToUI('assistant', charData.first_mes);
+        sessionsData[currentSessionId].messages.push({ role: 'assistant', content: charData.first_mes });
+        sessionsData[currentSessionId].title = `Chat with ${charData.name}`;
+        renderSessionList();
+    }
+
+    memoryModal.classList.add('hidden'); // 关闭弹窗
+});

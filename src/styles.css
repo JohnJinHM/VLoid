@@ -344,3 +344,150 @@ input:checked+.slider:before {
 .slider.round:before {
     border-radius: 50%;
 }
+
+/* 模态框样式 */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    backdrop-filter: blur(5px);
+}
+
+.modal-content {
+    background: #1e1e1e;
+    width: 600px;
+    max-width: 90%;
+    border-radius: 12px;
+    border: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    border-bottom: 1px solid #333;
+    background: #252526;
+}
+
+.modal-header h2 {
+    font-size: 1.2rem;
+    color: #e0e0e0;
+    margin: 0;
+}
+
+.icon-btn {
+    background: transparent;
+    border: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+    color: #aaa;
+}
+
+.icon-btn:hover {
+    color: #fff;
+    transform: scale(1.1);
+}
+
+.modal-body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+/* 角色导入区 */
+.upload-btn {
+    display: block;
+    text-align: center;
+    padding: 15px;
+    background: #3e445e;
+    color: #fff;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 2px dashed #5b6ea0;
+    transition: 0.2s;
+}
+
+.upload-btn:hover {
+    background: #4a5270;
+}
+
+.char-preview {
+    display: flex;
+    gap: 15px;
+    background: #252526;
+    padding: 15px;
+    border-radius: 8px;
+}
+
+#char-avatar {
+    width: 100px;
+    height: 100px;
+    border-radius: 8px;
+    object-fit: cover;
+    border: 1px solid #444;
+}
+
+.char-info {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.char-info h3 {
+    color: #5b6ea0;
+    margin: 0;
+}
+
+#apply-char-btn {
+    width: 100%;
+    padding: 12px;
+    background: #007acc;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 1rem;
+}
+
+#apply-char-btn:hover {
+    background: #005f9e;
+}
+
+/* 会话列表删除按钮 */
+.session-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.delete-session-btn {
+    background: transparent;
+    border: none;
+    color: #ff6b6b;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s;
+    padding: 0 5px;
+}
+
+.session-item:hover .delete-session-btn {
+    opacity: 1;
+}
+
+.delete-session-btn:hover {
+    transform: scale(1.2);
+}

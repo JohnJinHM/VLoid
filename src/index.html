@@ -10,13 +10,11 @@
 <body>
   <div class="app-container">
     <aside class="sidebar-left">
+      <button id="open-memory-btn"
+        style="background: #4a4a4a; margin-top: 5px; padding: 12px; border-radius: 8px; color: white; border: none; cursor: pointer;">📖
+        Memory & Personas</button>
       <button id="new-chat-btn">✨ New Chat</button>
       <div class="session-list" id="session-list">
-        <div class="session-item active" id="default-session">💬 Default Session</div>
-      </div>
-      <div class="memory-zone">
-        <h3>Memory Bank</h3>
-        <textarea placeholder="全局角色设定或长期记忆..."></textarea>
       </div>
     </aside>
 
@@ -69,7 +67,37 @@
       </div>
     </aside>
   </div>
-  <script src="renderer.js"></script>
+
+  <div id="memory-modal" class="modal-overlay hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>📖 Memory Bank & Personas</h2>
+        <button id="close-memory-btn" class="icon-btn">❌</button>
+      </div>
+      <div class="modal-body">
+        <div class="import-section">
+          <label for="char-file" class="upload-btn">📂 Import SillyTavern Card (PNG/WEBP/JSON)</label>
+          <input type="file" id="char-file" accept="image/png, image/webp, image/jpeg, application/json" class="hidden">
+        </div>
+
+        <div class="char-preview hidden" id="char-preview">
+          <img id="char-avatar" src="" alt="Avatar">
+          <div class="char-info">
+            <h3 id="char-name">Name</h3>
+            <textarea id="char-desc" rows="6" readonly placeholder="Character description..."></textarea>
+          </div>
+        </div>
+
+        <div class="action-section">
+          <button id="apply-char-btn" class="hidden"
+            style="width: 100%; padding: 12px; background: #007acc; color: white; border: none; border-radius: 8px; cursor: pointer;">Apply
+            to System Prompt & Start Chat 🚀</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="renderer.js"></script>
 </body>
 
 </html>
