@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
   <meta charset="UTF-8">
@@ -8,14 +8,21 @@
 </head>
 
 <body>
-  <div class="global-nav">
-    <button id="nav-chat-btn" class="nav-btn active">Chat</button>
-    <button id="nav-persona-btn" class="nav-btn">Personas</button>
-  </div>
+  <header class="top-nav">
+    <div class="nav-brand">
+      <!-- <span class="logo">✨</span> -->
+      <h1>AI Assistant</h1>
+    </div>
+    <div class="nav-controls">
+      <button id="nav-chat-btn" class="nav-btn active">Chat</button>
+      <button id="nav-persona-btn" class="nav-btn">Personas</button>
+    </div>
+    <div class="nav-spacer"></div>
+  </header>
 
-  <div id="chat-view" class="app-container">
+  <div id="chat-view" class="app-view">
     <aside class="sidebar-left">
-      <button id="new-chat-btn">New Chat</button>
+      <button id="new-chat-btn" class="primary-action-btn">New Chat</button>
       <div class="session-list" id="session-list"></div>
     </aside>
 
@@ -24,8 +31,8 @@
       <div class="input-area">
         <textarea id="user-input" placeholder="Type a message... (Shift+Enter to new line)"></textarea>
         <div class="action-buttons">
-          <button id="send-btn">Send</button>
-          <button id="stop-btn" class="hidden">Stop ⏹</button>
+          <button id="send-btn" class="send-btn">Send</button>
+          <button id="stop-btn" class="stop-btn hidden">Stop ⏹</button>
         </div>
       </div>
     </main>
@@ -34,52 +41,64 @@
       <h3>Settings & Parameters</h3>
 
       <div class="param-group">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-          <label style="margin:0;">System Prompt:</label>
+        <div class="param-header">
+          <label>System Prompt:</label>
           <span id="current-persona-badge" class="badge">Default Assistant</span>
         </div>
         <textarea id="sys-prompt" rows="6">You are a helpful, smart, kind, and efficient AI assistant.</textarea>
-        <small style="color: #666; font-size: 0.75rem;">Changes here are temporary for this chat.</small>
+        <small class="param-hint">Changes here are temporary for this chat.</small>
       </div>
 
       <div class="divider"></div>
 
       <div class="param-group">
-        <label>Temperature: <span id="temp-val">0.7</span></label>
+        <div class="param-header">
+          <label>Temperature:</label>
+          <span id="temp-val" class="param-val">0.7</span>
+        </div>
         <input type="range" id="temp-slider" min="0" max="2" step="0.1" value="0.7">
       </div>
+
       <div class="param-group">
-        <label>Top-P: <span id="topp-val">0.9</span></label>
+        <div class="param-header">
+          <label>Top-P:</label>
+          <span id="topp-val" class="param-val">0.9</span>
+        </div>
         <input type="range" id="topp-slider" min="0.1" max="1.0" step="0.05" value="0.9">
       </div>
+
       <div class="param-group">
-        <label>Repetition Penalty: <span id="rep-val">1.1</span></label>
+        <div class="param-header">
+          <label>Rep. Penalty:</label>
+          <span id="rep-val" class="param-val">1.1</span>
+        </div>
         <input type="range" id="rep-slider" min="0" max="2" step="0.1" value="1.1">
       </div>
+
       <div class="param-group">
-        <label>Max Tokens: <span id="tokens-val">2048</span></label>
+        <div class="param-header">
+          <label>Max Tokens:</label>
+          <span id="tokens-val" class="param-val">2048</span>
+        </div>
         <input type="range" id="tokens-slider" min="256" max="8192" step="256" value="2048">
       </div>
 
       <div class="divider"></div>
 
       <div class="param-group switch-group">
-        <label style="display: flex; justify-content: space-between; width: 100%;">
-          Enable RAG
-          <label class="switch">
-            <input type="checkbox" id="rag-toggle">
-            <span class="slider round"></span>
-          </label>
+        <label>Enable RAG</label>
+        <label class="switch">
+          <input type="checkbox" id="rag-toggle">
+          <span class="slider round"></span>
         </label>
       </div>
     </aside>
   </div>
 
-  <div id="persona-view" class="app-container hidden">
+  <div id="persona-view" class="app-view hidden">
     <aside class="sidebar-left">
-      <button id="new-persona-btn">Create Persona</button>
-      <div class="session-list" id="persona-list">
-      </div>
+      <button id="new-persona-btn" class="primary-action-btn">Create Persona</button>
+      <div class="session-list" id="persona-list"></div>
     </aside>
 
     <main class="persona-editor-area">
@@ -94,34 +113,29 @@
       <div class="editor-content" id="persona-editor-content">
         <div class="editor-row">
           <img id="persona-avatar" src="" alt="Avatar" class="hidden">
-          <div class="editor-fields" style="flex-grow: 1;">
+          <div class="editor-fields">
             <label>Name</label>
             <input type="text" id="persona-name" class="form-input" placeholder="Character Name">
           </div>
         </div>
 
-        <div class="param-group" style="margin-top: 20px;">
+        <div class="param-group mt-20">
           <label>Background & Description</label>
           <textarea id="persona-desc" rows="4" class="form-input" placeholder="Who is this character?"></textarea>
         </div>
 
-        <div class="rules-section" style="margin-top: 20px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <div class="rules-section mt-20">
+          <div class="rules-header">
             <label>Behavior Rules</label>
             <button id="add-rule-btn" class="icon-btn" title="Add Rule">➕</button>
           </div>
           <div id="rules-container" class="rules-list"></div>
         </div>
 
-        <div class="editor-actions"
-          style="margin-top: 40px; display: flex; gap: 15px; justify-content: flex-end; padding-top: 20px; border-top: 1px solid #2d2d2d;">
-          <button id="delete-persona-btn" class="outline-btn"
-            style="color: #ff6b6b; border-color: transparent; margin-right: auto;">🗑️ Delete</button>
-          <button id="reset-persona-btn" class="outline-btn" style="color: #aaa; border-color: #555;">Revert
-            Changes</button>
-          <button id="save-persona-btn" class="primary-btn"
-            style="background: #5b6ea0; color: white; padding: 10px 24px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">💾
-            Save Persona</button>
+        <div class="editor-actions">
+          <button id="delete-persona-btn" class="text-danger-btn">🗑️ Delete</button>
+          <button id="reset-persona-btn" class="outline-btn">Revert Changes</button>
+          <button id="save-persona-btn" class="solid-primary-btn">💾 Save Persona</button>
         </div>
       </div>
     </main>
