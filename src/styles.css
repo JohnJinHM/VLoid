@@ -77,7 +77,8 @@ button {
     font-weight: 500;
 }
 
-#new-chat-btn {
+#new-chat-btn,
+#new-persona-btn {
     padding: 12px;
     background: #2a2d3e;
     color: #fff;
@@ -88,14 +89,21 @@ button {
     align-items: center;
     justify-content: center;
     gap: 8px;
+    width: 100%;
+    /* 确保它能撑满侧边栏的宽度 */
+    font-weight: bold;
+    transition: all 0.2s ease;
 }
 
-#new-chat-btn:hover {
+#new-chat-btn:hover,
+#new-persona-btn:hover {
     background: #3e445e;
     transform: translateY(-1px);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
 }
 
 .session-list {
+    color: #5b6ea0;
     flex-grow: 1;
     overflow-y: auto;
     display: flex;
@@ -407,66 +415,6 @@ input:checked+.slider:before {
     gap: 20px;
 }
 
-/* 角色导入区 */
-.upload-btn {
-    display: block;
-    text-align: center;
-    padding: 15px;
-    background: #3e445e;
-    color: #fff;
-    border-radius: 8px;
-    cursor: pointer;
-    border: 2px dashed #5b6ea0;
-    transition: 0.2s;
-}
-
-.upload-btn:hover {
-    background: #4a5270;
-}
-
-.char-preview {
-    display: flex;
-    gap: 15px;
-    background: #252526;
-    padding: 15px;
-    border-radius: 8px;
-}
-
-#char-avatar {
-    width: 100px;
-    height: 100px;
-    border-radius: 8px;
-    object-fit: cover;
-    border: 1px solid #444;
-}
-
-.char-info {
-    flex-grow: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-.char-info h3 {
-    color: #5b6ea0;
-    margin: 0;
-}
-
-#apply-char-btn {
-    width: 100%;
-    padding: 12px;
-    background: #007acc;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 1rem;
-}
-
-#apply-char-btn:hover {
-    background: #005f9e;
-}
-
 /* 会话列表删除按钮 */
 .session-item {
     display: flex;
@@ -490,4 +438,112 @@ input:checked+.slider:before {
 
 .delete-session-btn:hover {
     transform: scale(1.2);
+}
+
+.global-nav {
+    position: absolute;
+    top: 15px;
+    left: 15px;
+    z-index: 100;
+    display: flex;
+    gap: 10px;
+}
+
+.nav-btn {
+    background: #1e1e1e;
+    color: #888;
+    border: 1px solid #333;
+    padding: 8px 16px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.nav-btn.active {
+    background: #5b6ea0;
+    color: white;
+    border-color: #5b6ea0;
+}
+
+/* 视图容器重置 (确保顶部导航有空间) */
+.app-container {
+    padding-top: 60px;
+    /* 给 global-nav 留出空间 */
+    height: 100vh;
+    display: flex;
+}
+
+/* 右侧边栏 Badge */
+.badge {
+    background: #2a2d3e;
+    color: #8bb4f7;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    border: 1px solid #3e445e;
+}
+
+/* Persona Editor 区域 */
+.persona-editor-area {
+    flex-grow: 1;
+    background-color: #121212;
+    padding: 30px 10%;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #2d2d2d;
+    padding-bottom: 20px;
+    margin-bottom: 20px;
+}
+
+.form-input {
+    width: 100%;
+    background: #1e1e1e;
+    color: #e0e0e0;
+    border: 1px solid #333;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 0.95rem;
+    outline: none;
+}
+
+.form-input:focus {
+    border-color: #5b6ea0;
+}
+
+.editor-row {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+}
+
+#persona-avatar {
+    width: 80px;
+    height: 80px;
+    border-radius: 12px;
+    object-fit: cover;
+    border: 1px solid #444;
+}
+
+.outline-btn {
+    padding: 8px 16px;
+    background: transparent;
+    color: #5b6ea0;
+    border: 1px solid #555;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.outline-btn:hover {
+    background: #2a2d3e;
+    border-color: #5b6ea0;
 }

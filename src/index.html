@@ -8,21 +8,21 @@
 </head>
 
 <body>
-  <div class="app-container">
+  <div class="global-nav">
+    <button id="nav-chat-btn" class="nav-btn active">Chat</button>
+    <button id="nav-persona-btn" class="nav-btn">Personas</button>
+  </div>
+
+  <div id="chat-view" class="app-container">
     <aside class="sidebar-left">
-      <button id="open-memory-btn"
-        style="background: #4a4a4a; margin-top: 5px; padding: 12px; border-radius: 8px; color: white; border: none; cursor: pointer;">📖
-        Memory & Personas</button>
-      <button id="new-chat-btn">✨ New Chat</button>
-      <div class="session-list" id="session-list">
-      </div>
+      <button id="new-chat-btn">New Chat</button>
+      <div class="session-list" id="session-list"></div>
     </aside>
 
     <main class="chat-area">
-      <div class="message-container" id="message-container">
-      </div>
+      <div class="message-container" id="message-container"></div>
       <div class="input-area">
-        <textarea id="user-input" placeholder="Type a message... (Shift+Enter to new line, Enter to send)"></textarea>
+        <textarea id="user-input" placeholder="Type a message... (Shift+Enter to new line)"></textarea>
         <div class="action-buttons">
           <button id="send-btn">Send</button>
           <button id="stop-btn" class="hidden">Stop ⏹</button>
@@ -32,9 +32,14 @@
 
     <aside class="sidebar-right">
       <h3>Settings & Parameters</h3>
+
       <div class="param-group">
-        <label>System Prompt:</label>
-        <textarea id="sys-prompt" rows="4">You are a helpful, smart, kind, and efficient AI assistant.</textarea>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+          <label style="margin:0;">System Prompt:</label>
+          <span id="current-persona-badge" class="badge">Default Assistant</span>
+        </div>
+        <textarea id="sys-prompt" rows="6">You are a helpful, smart, kind, and efficient AI assistant.</textarea>
+        <small style="color: #666; font-size: 0.75rem;">Changes here are temporary for this chat.</small>
       </div>
 
       <div class="divider"></div>
@@ -59,42 +64,67 @@
       <div class="divider"></div>
 
       <div class="param-group switch-group">
-        <label>Enable RAG 📚</label>
-        <label class="switch">
-          <input type="checkbox" id="rag-toggle">
-          <span class="slider round"></span>
+        <label style="display: flex; justify-content: space-between; width: 100%;">
+          Enable RAG
+          <label class="switch">
+            <input type="checkbox" id="rag-toggle">
+            <span class="slider round"></span>
+          </label>
         </label>
       </div>
     </aside>
   </div>
 
-  <div id="memory-modal" class="modal-overlay hidden">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2>📖 Memory Bank & Personas</h2>
-        <button id="close-memory-btn" class="icon-btn">❌</button>
+  <div id="persona-view" class="app-container hidden">
+    <aside class="sidebar-left">
+      <button id="new-persona-btn">Create Persona</button>
+      <div class="session-list" id="persona-list">
       </div>
-      <div class="modal-body">
-        <div class="import-section">
-          <label for="char-file" class="upload-btn">📂 Import SillyTavern Card (PNG/WEBP/JSON)</label>
-          <input type="file" id="char-file" accept="image/png, image/webp, image/jpeg, application/json" class="hidden">
-        </div>
+    </aside>
 
-        <div class="char-preview hidden" id="char-preview">
-          <img id="char-avatar" src="" alt="Avatar">
-          <div class="char-info">
-            <h3 id="char-name">Name</h3>
-            <textarea id="char-desc" rows="6" readonly placeholder="Character description..."></textarea>
+    <main class="persona-editor-area">
+      <div class="editor-header">
+        <h2>Persona Editor</h2>
+        <div class="header-actions">
+          <label for="char-file" class="outline-btn">Import SillyTavern</label>
+          <input type="file" id="char-file" accept="image/png, image/webp, application/json" class="hidden">
+        </div>
+      </div>
+
+      <div class="editor-content" id="persona-editor-content">
+        <div class="editor-row">
+          <img id="persona-avatar" src="" alt="Avatar" class="hidden">
+          <div class="editor-fields" style="flex-grow: 1;">
+            <label>Name</label>
+            <input type="text" id="persona-name" class="form-input" placeholder="Character Name">
           </div>
         </div>
 
-        <div class="action-section">
-          <button id="apply-char-btn" class="hidden"
-            style="width: 100%; padding: 12px; background: #007acc; color: white; border: none; border-radius: 8px; cursor: pointer;">Apply
-            to System Prompt & Start Chat 🚀</button>
+        <div class="param-group" style="margin-top: 20px;">
+          <label>Background & Description</label>
+          <textarea id="persona-desc" rows="4" class="form-input" placeholder="Who is this character?"></textarea>
+        </div>
+
+        <div class="rules-section" style="margin-top: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <label>Behavior Rules</label>
+            <button id="add-rule-btn" class="icon-btn" title="Add Rule">➕</button>
+          </div>
+          <div id="rules-container" class="rules-list"></div>
+        </div>
+
+        <div class="editor-actions"
+          style="margin-top: 40px; display: flex; gap: 15px; justify-content: flex-end; padding-top: 20px; border-top: 1px solid #2d2d2d;">
+          <button id="delete-persona-btn" class="outline-btn"
+            style="color: #ff6b6b; border-color: transparent; margin-right: auto;">🗑️ Delete</button>
+          <button id="reset-persona-btn" class="outline-btn" style="color: #aaa; border-color: #555;">Revert
+            Changes</button>
+          <button id="save-persona-btn" class="primary-btn"
+            style="background: #5b6ea0; color: white; padding: 10px 24px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">💾
+            Save Persona</button>
         </div>
       </div>
-    </div>
+    </main>
   </div>
 
   <script type="module" src="renderer.js"></script>

@@ -159,3 +159,5 @@ configs/local_config.yaml
 
 *.gguf
 *.safetensors
+
+*.db

@@ -10,6 +10,9 @@ class ChatRequest(BaseModel):
     session_id: str = Field(..., description="用于区分多个对话标签页")
     messages: List[Message]
     
+    # 【新增】指示当前用户消息挂载在哪个父节点下。如果不传，则作为全新的根节点。
+    parent_id: Optional[int] = None 
+    
     # 生成参数管理
     temperature: Optional[float] = 0.7
     top_p: Optional[float] = 0.9
@@ -29,11 +32,17 @@ class SessionInfo(BaseModel):
     id: str
     title: str
     created_at: datetime
+    # 【新增】返回当前会话的最新叶子节点
+    current_node_id: Optional[int] = None 
     
-    model_config = ConfigDict(from_attributes=True) # 允许从 SQLAlchemy ORM 模型自动转换
+    model_config = ConfigDict(from_attributes=True) 
 
 class MessageInfo(BaseModel):
+    # 【新增】返回 ID 信息，供前端构建 messagesMap 字典和多叉树
+    id: int
+    parent_id: Optional[int] = None
     role: str
     content: str
+    created_at: datetime
     
     model_config = ConfigDict(from_attributes=True)
