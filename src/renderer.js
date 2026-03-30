@@ -2,6 +2,7 @@ import { initSessionManager, fetchAndRenderSessions } from './js/components/Sess
 import { initChatController } from './js/components/ChatController.js';
 import { initPersonaManager } from './js/components/PersonaEditor.js';
 import { initSettingsPanel } from './js/components/SettingsPanel.js';
+import { initAudioSettings } from './js/components/AudioSettings.js';
 
 // 监听 DOM 加载完毕，初始化各个模块
 document.addEventListener('DOMContentLoaded', async () => {
@@ -12,6 +13,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initChatController();
     initPersonaManager();
     initSettingsPanel();
+    initAudioSettings();
 
     // 发起首次后端同步
     await fetchAndRenderSessions();

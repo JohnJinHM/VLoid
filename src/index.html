@@ -10,16 +10,17 @@
 <body>
   <header class="top-nav">
     <div class="nav-brand">
-      <!-- <span class="logo">✨</span> -->
       <h1>AI Assistant</h1>
     </div>
     <div class="nav-controls">
       <button id="nav-chat-btn" class="nav-btn active">Chat</button>
       <button id="nav-persona-btn" class="nav-btn">Personas</button>
+      <button id="nav-settings-btn" class="nav-btn">Settings</button>
     </div>
     <div class="nav-spacer"></div>
   </header>
 
+  <!-- ==================== Chat View ==================== -->
   <div id="chat-view" class="app-view">
     <aside class="sidebar-left">
       <button id="new-chat-btn" class="primary-action-btn">New Chat</button>
@@ -34,12 +35,20 @@
           <button id="send-btn" class="send-btn">Send</button>
           <button id="stop-btn" class="stop-btn hidden">Stop ⏹</button>
         </div>
+        <!-- TTS 开关按钮 -->
+        <button id="tts-toggle-btn" class="tts-toggle-btn" title="TTS Disabled (click to enable)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <path class="tts-wave tts-wave-1" d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            <path class="tts-wave tts-wave-2" d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+          </svg>
+        </button>
       </div>
     </main>
 
     <aside class="sidebar-right">
       <h3>Settings & Parameters</h3>
-
       <div class="param-group">
         <div class="param-header">
           <label>System Prompt:</label>
@@ -48,9 +57,7 @@
         <textarea id="sys-prompt" rows="6">You are a helpful, smart, kind, and efficient AI assistant.</textarea>
         <small class="param-hint">Changes here are temporary for this chat.</small>
       </div>
-
       <div class="divider"></div>
-
       <div class="param-group">
         <div class="param-header">
           <label>Temperature:</label>
@@ -58,7 +65,6 @@
         </div>
         <input type="range" id="temp-slider" min="0" max="2" step="0.1" value="0.7">
       </div>
-
       <div class="param-group">
         <div class="param-header">
           <label>Top-P:</label>
@@ -66,7 +72,6 @@
         </div>
         <input type="range" id="topp-slider" min="0.1" max="1.0" step="0.05" value="0.9">
       </div>
-
       <div class="param-group">
         <div class="param-header">
           <label>Rep. Penalty:</label>
@@ -74,7 +79,6 @@
         </div>
         <input type="range" id="rep-slider" min="0" max="2" step="0.1" value="1.1">
       </div>
-
       <div class="param-group">
         <div class="param-header">
           <label>Max Tokens:</label>
@@ -82,9 +86,7 @@
         </div>
         <input type="range" id="tokens-slider" min="256" max="8192" step="256" value="2048">
       </div>
-
       <div class="divider"></div>
-
       <div class="param-group switch-group">
         <label>Enable RAG</label>
         <label class="switch">
@@ -95,6 +97,7 @@
     </aside>
   </div>
 
+  <!-- ==================== Persona View ==================== -->
   <div id="persona-view" class="app-view hidden">
     <aside class="sidebar-left">
       <button id="new-persona-btn" class="primary-action-btn">Create Persona</button>
@@ -111,6 +114,7 @@
       </div>
 
       <div class="editor-content" id="persona-editor-content">
+        <!-- 基础信息 -->
         <div class="editor-row">
           <img id="persona-avatar" src="" alt="Avatar" class="hidden">
           <div class="editor-fields">
@@ -132,6 +136,93 @@
           <div id="rules-container" class="rules-list"></div>
         </div>
 
+        <!-- ==================== TTS Voice Settings ==================== -->
+        <div class="tts-settings-section mt-20">
+          <div class="tts-section-header">
+            <h3 class="tts-section-title">Voice Settings (Qwen3-TTS)</h3>
+            <div class="tts-mode-switch">
+              <span class="tts-mode-option">Voice Design</span>
+              <label class="switch">
+                <input type="checkbox" id="tts-mode-toggle">
+                <span class="slider round"></span>
+              </label>
+              <span class="tts-mode-option" id="tts-mode-label">Voice Clone</span>
+            </div>
+          </div>
+
+          <!-- VoiceDesign 模式 -->
+          <div id="voice-design-section" class="tts-mode-content">
+            <p class="tts-mode-desc">
+              Create a custom voice using natural language descriptions. Powered by
+              <code>Qwen3-TTS-12Hz-1.7B-VoiceDesign</code> — describe gender, age, tone, accent, emotion, and speaking
+              style.
+            </p>
+            <div class="param-group">
+              <label>Voice Instruct <span class="param-hint">(describe the voice)</span></label>
+              <textarea id="vd-instruct" rows="3" class="form-input"
+                placeholder="e.g., Female, 25 years old, warm and friendly tone, slight British accent, moderate speaking pace, clear enunciation"></textarea>
+            </div>
+            <div class="param-group">
+              <label>Language</label>
+              <select id="vd-language" class="form-input form-select">
+                <option value="auto">Auto Detect</option>
+                <option value="Chinese">Chinese (中文)</option>
+                <option value="English">English</option>
+                <option value="Japanese">Japanese (日本語)</option>
+                <option value="Korean">Korean (한국어)</option>
+                <option value="German">German (Deutsch)</option>
+                <option value="French">French (Français)</option>
+                <option value="Russian">Russian (Русский)</option>
+                <option value="Portuguese">Portuguese (Português)</option>
+                <option value="Spanish">Spanish (Español)</option>
+                <option value="Italian">Italian (Italiano)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Voice Clone 模式 -->
+          <div id="voice-clone-section" class="tts-mode-content hidden">
+            <p class="tts-mode-desc">
+              Clone a voice from a short audio sample (3–15 seconds recommended). Powered by
+              <code>Qwen3-TTS-12Hz-1.7B-Base</code> — upload clean, noise-free reference audio for best results.
+            </p>
+            <div class="param-group">
+              <label>Reference Audio <span class="param-hint">(WAV, MP3, OGG, FLAC — 3~15s recommended)</span></label>
+              <div class="vc-audio-row">
+                <button id="vc-audio-upload-btn" class="outline-btn vc-upload-btn">📁 Upload Audio</button>
+                <input type="file" id="vc-audio-file"
+                  accept="audio/wav,audio/mp3,audio/mpeg,audio/ogg,audio/flac,.wav,.mp3,.ogg,.flac" class="hidden">
+                <span id="vc-audio-status" class="vc-audio-status">No audio uploaded</span>
+                <button id="vc-audio-clear-btn" class="icon-btn vc-clear-btn hidden" title="Clear audio">✕</button>
+              </div>
+              <audio id="vc-audio-preview" controls class="vc-audio-preview hidden"></audio>
+            </div>
+            <div class="param-group">
+              <label>Reference Text <span class="param-hint">(transcript of the reference audio — improves
+                  quality)</span></label>
+              <textarea id="vc-ref-text" rows="2" class="form-input"
+                placeholder="Type the exact words spoken in the reference audio..."></textarea>
+            </div>
+            <div class="param-group">
+              <label>Language</label>
+              <select id="vc-language" class="form-input form-select">
+                <option value="auto">Auto Detect</option>
+                <option value="Chinese">Chinese (中文)</option>
+                <option value="English">English</option>
+                <option value="Japanese">Japanese (日本語)</option>
+                <option value="Korean">Korean (한국어)</option>
+                <option value="German">German (Deutsch)</option>
+                <option value="French">French (Français)</option>
+                <option value="Russian">Russian (Русский)</option>
+                <option value="Portuguese">Portuguese (Português)</option>
+                <option value="Spanish">Spanish (Español)</option>
+                <option value="Italian">Italian (Italiano)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <!-- ==================== End TTS Voice Settings ==================== -->
+
         <div class="editor-actions">
           <button id="delete-persona-btn" class="text-danger-btn">🗑️ Delete</button>
           <button id="reset-persona-btn" class="outline-btn">Revert Changes</button>
@@ -139,6 +230,43 @@
         </div>
       </div>
     </main>
+  </div>
+
+  <!-- ==================== Settings View ==================== -->
+  <div id="settings-view" class="app-view hidden">
+    <div class="settings-content">
+
+      <h2 class="settings-page-title">Settings</h2>
+
+      <!-- Audio Devices -->
+      <section class="settings-section">
+        <div class="settings-section-header">
+          <h3>Audio Devices</h3>
+          <div class="settings-section-actions">
+            <button id="audio-devices-perm" class="outline-btn">Grant Mic Permission</button>
+            <button id="audio-devices-refresh" class="outline-btn">↻ Refresh</button>
+          </div>
+        </div>
+
+        <div class="param-group">
+          <label>Output Device <span class="param-hint">(TTS playback)</span></label>
+          <select id="audio-output-device" class="form-input form-select">
+            <option value="">— System Default —</option>
+          </select>
+        </div>
+
+        <div class="param-group">
+          <label>Input Device <span class="param-hint">(Microphone — for future use)</span></label>
+          <select id="audio-input-device" class="form-input form-select">
+            <option value="">— System Default —</option>
+          </select>
+        </div>
+
+        <p class="param-hint settings-hint">
+          If device labels appear as IDs, click <em>Grant Mic Permission</em> then <em>Refresh</em>.
+        </p>
+      </section>
+    </div>
   </div>
 
   <script type="module" src="renderer.js"></script>

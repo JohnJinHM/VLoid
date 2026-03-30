@@ -3,7 +3,6 @@ inference_engine: "llama_cpp"
 system:
   wsl_distro: "Ubuntu"
   project_dir: "C:/Projects/VLoid"
-  # project_dir: "/home/jinha/VLoid"
 
 llama_cpp:
   model_path: "./models/llm/Qwen3.5-9B-Q4_K_M.gguf"
@@ -24,3 +23,15 @@ vllm:
 
 open-webui:
   enabled: false
+
+tts:
+  # Local paths to downloaded Qwen3-TTS model directories.
+  # Set to a HuggingFace repo ID (e.g. "Qwen/Qwen3-TTS-12Hz-1.7B-Base") to
+  # download on first run instead of using a local copy.
+  base_model_path: "./models/tts/Qwen3-TTS-12Hz-1.7B-Base"
+  vd_model_path:  "./models/tts/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+
+  # Inference device: "cuda" | "cpu"
+  device: "cuda"
+  # Tensor dtype: "bfloat16" (recommended on CUDA) | "float16" | "float32"
+  dtype: "bfloat16"

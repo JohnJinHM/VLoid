@@ -161,3 +161,5 @@ configs/local_config.yaml
 *.safetensors
 
 *.db
+
+models/

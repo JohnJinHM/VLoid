@@ -22,7 +22,9 @@ class ColorFormatter(logging.Formatter):
         "WARNING": "\033[93m", # Yellow
         "ERROR": "\033[91m",   # Red
         "LLMService": "\033[95m", # Magenta
-        "ApiServer": "\033[96m", # Cyan
+        "TTSService": "\033[95m",
+        "APIServer": "\033[96m", # Cyan
+        "App": "\033[92m", # Green
         "RESET": "\033[0m"
     }
 

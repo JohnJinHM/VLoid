@@ -1,6 +1,9 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
 
+// Remove Chromium's autoplay block so AudioContext works after async TTS inference
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
