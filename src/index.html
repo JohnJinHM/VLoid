@@ -264,6 +264,39 @@
           If device labels appear as IDs, click <em>Grant Mic Permission</em> then <em>Refresh</em>.
         </p>
       </section>
+
+      <!-- TTS Playback -->
+      <section class="settings-section">
+        <div class="settings-section-header">
+          <h3>TTS Playback</h3>
+        </div>
+
+        <div class="param-group">
+          <div class="param-header">
+            <label>Volume:</label>
+            <span id="tts-volume-val" class="param-val">100%</span>
+          </div>
+          <input type="range" id="tts-volume-slider" min="0" max="1" step="0.05" value="1">
+        </div>
+
+        <div class="param-group">
+          <label>Text Split Mode <span class="param-hint">(how TTS divides the response for streaming)</span></label>
+          <select id="tts-split-mode" class="form-input form-select">
+            <option value="sentence">By sentence  ( .  !  ?  。 ！ ？ )</option>
+            <option value="punctuation">By punctuation  (incl.  ,  ，  ;  ；  …)</option>
+            <option value="paragraph">By paragraph  (newlines)</option>
+            <option value="whole">Whole message  (no split)</option>
+          </select>
+        </div>
+
+        <div class="param-group">
+          <label class="toggle-label">
+            <input type="checkbox" id="tts-native-stream-toggle">
+            Native streaming
+            <span class="param-hint">(model emits PCM frames directly — lower first-chunk latency)</span>
+          </label>
+        </div>
+      </section>
     </div>
   </div>
 

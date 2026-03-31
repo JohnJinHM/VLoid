@@ -1,11 +1,15 @@
 import io
 import os
+import tempfile
 from threading import Lock
 
+import numpy as np
 import torch
 import soundfile as sf
 
 import transformers.utils
+
+torch.set_float32_matmul_precision('high')
 
 # Patch 1: stub auto_docstring decorator missing in transformers 5.x
 if not hasattr(transformers.utils, "auto_docstring"):
@@ -66,6 +70,7 @@ class TTSService:
         self.vd_loaded    = False
         self.clone_loaded = False
         self._clone_load_lock = Lock()
+        self._prompt_cache: dict = {}   # (ref_audio_path, ref_text) → prompt vector
 
         logger.info(f"Initializing TTS Service — device={self.device}, dtype={dtype_str}")
 
@@ -83,6 +88,7 @@ class TTSService:
             )
             self.vd_loaded = True
             logger.info("VoiceDesign model loaded successfully.")
+            self._enable_streaming_opts(self.design_model)
         except Exception as e:
             logger.error(f"Failed to load VoiceDesign model: {e}", exc_info=True)
 
@@ -100,6 +106,7 @@ class TTSService:
                 )
                 self.clone_loaded = True
                 logger.info("Base (clone) model loaded successfully.")
+                self._enable_streaming_opts(self.clone_model)
             except Exception as e:
                 logger.error(f"Failed to load clone model: {e}", exc_info=True)
                 raise RuntimeError(f"Could not load clone model: {e}") from e
@@ -156,18 +163,132 @@ class TTSService:
         if not os.path.isfile(ref_audio_path):
             raise RuntimeError(f"Reference audio file not found: '{ref_audio_path}'")
 
-        # generate_voice_clone expects a file-path string, not bytes.
-        wavs, sr = self.clone_model.generate_voice_clone(
-            text=text,
-            language=language if language else "Auto",
-            ref_audio=ref_audio_path,   # absolute path string
-            ref_text=ref_text,
-        )
+        # Read the audio ourselves with soundfile, then write it to a temp file
+        # with a guaranteed simple ASCII path before passing it to the model.
+        # This sidesteps failures that occur when generate_voice_clone's internal
+        # file reader (ffmpeg / librosa) receives paths with non-ASCII characters,
+        # Windows backslashes, or spaces.
+        audio_data, sr_in = sf.read(ref_audio_path, dtype="float32")
+
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+        try:
+            os.close(tmp_fd)
+            sf.write(tmp_path, audio_data, sr_in, format="WAV", subtype="PCM_16")
+            wavs, sr = self.clone_model.generate_voice_clone(
+                text=text,
+                language=language if language else "Auto",
+                ref_audio=tmp_path,
+                ref_text=ref_text,
+            )
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
         return self._numpy_to_wav_bytes(wavs[0], sr)
+
+    # ------------------------------------------------------------------
+    # Native streaming inference
+    # ------------------------------------------------------------------
+
+    def stream_voice_design_sentence(self, text: str, instruct: str, language: str):
+        """
+        Generator yielding (pcm_np: np.ndarray[float32], sample_rate: int) tuples
+        directly from the model's frame-level streaming decoder.
+        Each chunk has a short fade-in/out applied to prevent boundary clicks.
+        """
+        if not self.vd_loaded:
+            raise RuntimeError("VoiceDesign model is not loaded.")
+
+        kwargs = {
+            "text": text,
+            "language": language or "Auto",
+            "emit_every_frames": 12,
+            "decode_window_frames": 80,
+            "first_chunk_emit_every": 5,
+            "first_chunk_decode_window": 48,
+        }
+        if instruct and instruct.strip():
+            kwargs["instruction"] = instruct.strip()
+
+        for chunk, sr in self.design_model.stream_generate_voice_design(**kwargs):
+            yield self._apply_edge_fade(chunk), sr
+
+    def stream_voice_clone_sentence(
+        self, text: str, ref_audio_path: str, ref_text: str, language: str
+    ):
+        """
+        Generator yielding (pcm_np: np.ndarray[float32], sample_rate: int) tuples
+        via model-native streaming.  The voice-clone prompt vector is computed once
+        per (ref_audio_path, ref_text) pair and cached for subsequent calls.
+        """
+        self._ensure_clone_loaded()
+
+        if not os.path.isfile(ref_audio_path):
+            raise RuntimeError(f"Reference audio file not found: '{ref_audio_path}'")
+
+        cache_key = (ref_audio_path, ref_text)
+        if cache_key in self._prompt_cache:
+            prompt = self._prompt_cache[cache_key]
+            tmp_path = None
+        else:
+            audio_data, sr_in = sf.read(ref_audio_path, dtype="float32")
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+            os.close(tmp_fd)
+            sf.write(tmp_path, audio_data, sr_in, format="WAV", subtype="PCM_16")
+            prompt = self.clone_model.create_voice_clone_prompt(
+                ref_audio=tmp_path, ref_text=ref_text
+            )
+            self._prompt_cache[cache_key] = prompt
+
+        try:
+            streamer = self.clone_model.stream_generate_voice_clone(
+                text=text,
+                language=language or "Auto",
+                voice_clone_prompt=prompt,
+                emit_every_frames=12,
+                decode_window_frames=80,
+                first_chunk_emit_every=5,
+                first_chunk_decode_window=48,
+            )
+            for chunk, sr in streamer:
+                yield self._apply_edge_fade(chunk), sr
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _enable_streaming_opts(self, model):
+        """Call enable_streaming_optimizations on a loaded model.  On CUDA, also
+        compiles the decoder with reduce-overhead for lower first-chunk latency."""
+        opts = {"decode_window_frames": 80, "use_compile": False}
+        if self.device == "cuda":
+            opts["use_compile"] = False
+            opts["compile_mode"] = "reduce-overhead"
+        try:
+            model.enable_streaming_optimizations(**opts)
+            logger.info("Streaming optimizations enabled.")
+        except Exception as e:
+            logger.warning(f"Could not enable streaming optimizations: {e}")
+
+    @staticmethod
+    def _apply_edge_fade(chunk: np.ndarray, fade_samples: int = 120) -> np.ndarray:
+        """Apply a short linear fade-in and fade-out to a PCM chunk.
+        Prevents audible clicks at the seam between consecutive chunks."""
+        chunk = chunk.copy()
+        n = min(fade_samples, len(chunk) // 4)
+        if n > 0:
+            ramp = np.linspace(0.0, 1.0, n, dtype=np.float32)
+            chunk[:n] *= ramp
+            chunk[-n:] *= ramp[::-1]
+        return chunk
 
     def _numpy_to_wav_bytes(self, audio_np, sample_rate: int) -> bytes:
         buf = io.BytesIO()

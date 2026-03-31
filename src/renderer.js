@@ -4,17 +4,42 @@ import { initPersonaManager } from './js/components/PersonaEditor.js';
 import { initSettingsPanel } from './js/components/SettingsPanel.js';
 import { initAudioSettings } from './js/components/AudioSettings.js';
 
-// 监听 DOM 加载完毕，初始化各个模块
-document.addEventListener('DOMContentLoaded', async () => {
-    console.log("Initializing AI Assistant UI...");
+const { ipcRenderer } = require('electron');
 
-    // 绑定基础事件监听
+const API_READY_URL = 'http://127.0.0.1:3000/api/ready';
+const POLL_INTERVAL_MS = 1000;
+
+/**
+ * Poll GET /api/ready until the backend signals it is fully initialised
+ * (TTS model loaded, all routers registered).  Resolves as soon as the
+ * endpoint returns { ready: true }.
+ */
+async function waitForBackend() {
+    while (true) {
+        try {
+            const res = await fetch(API_READY_URL);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.ready) return;
+            }
+        } catch (_) {
+            // Backend not up yet — keep polling
+        }
+        await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    await waitForBackend();
+
+    // Tell the main process to show the window now that the backend is ready
+    ipcRenderer.send('backend-ready');
+
     initSessionManager();
     initChatController();
     initPersonaManager();
     initSettingsPanel();
     initAudioSettings();
 
-    // 发起首次后端同步
     await fetchAndRenderSessions();
 });

@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import { state } from '../store.js';
 import { renderSessionList } from './SessionManager.js';
-import { getSettings } from './SettingsPanel.js';
+import { getSettings, getTTSVolume, getTTSSplitMode, getTTSNativeStreaming } from './SettingsPanel.js';
 import { getSelectedOutputDevice } from './AudioSettings.js';
 
 const messageContainer = document.getElementById('message-container');
@@ -44,15 +44,31 @@ export function getAudioCtxState() {
 // AudioContext for TTS playback
 // ==========================================
 
-let _audioCtx = null;
+let _audioCtx  = null;
+let _gainNode  = null;
 let _ttsSource = null;
 let _ttsAbort  = null;   // AbortController for in-flight TTS requests
 
 function _getAudioCtx() {
     if (!_audioCtx || _audioCtx.state === 'closed') {
         _audioCtx = new AudioContext();
+        _gainNode = null;   // Gain node is tied to the context; reset with it
     }
     return _audioCtx;
+}
+
+/**
+ * Returns the GainNode for volume control, creating it if necessary.
+ * The gain value is refreshed from settings on every call so volume changes
+ * take effect at the start of the next chunk.
+ */
+function _getGainNode(ctx) {
+    if (!_gainNode) {
+        _gainNode = ctx.createGain();
+        _gainNode.connect(ctx.destination);
+    }
+    _gainNode.gain.value = getTTSVolume();
+    return _gainNode;
 }
 
 /**
@@ -67,13 +83,55 @@ async function _applyOutputDevice(ctx) {
 }
 
 /**
- * executeTTS — fetch sentence-level streaming TTS and play each WAV chunk
- * sequentially as soon as it arrives.
+ * Filter AI response text before sending to TTS.
+ * Removes non-speakable elements while preserving natural punctuation so the
+ * sentence/punctuation split modes still work correctly.
  *
- * Wire format from the backend:
- *   [4-byte uint32 big-endian length][WAV bytes]  (repeated per sentence)
+ * Handles English, Chinese, and Japanese text.
+ */
+function _filterTextForTTS(text) {
+    let t = text;
+
+    // Remove <think>...</think> and <thinking>...</thinking> (model CoT blocks)
+    t = t.replace(/<think(?:ing)?[\s\S]*?<\/think(?:ing)?>/gi, '');
+
+    // Remove fenced code blocks  (``` ... ```)
+    t = t.replace(/```[\s\S]*?```/g, '');
+
+    // Remove inline code  (`...`)
+    t = t.replace(/`[^`\n]+`/g, '');
+
+    // Remove markdown headers  (# Heading)
+    t = t.replace(/^#{1,6}\s+/gm, '');
+
+    // Strip markdown bold/italic markers, keep the inner text
+    // **bold** / *italic* / __bold__ / _italic_
+    t = t.replace(/\*{1,3}([^*\n]*)\*{1,3}/g, '$1');
+    t = t.replace(/_{1,3}([^_\n]*)_{1,3}/g, '$1');
+
+    // Remove any remaining HTML/XML tags (e.g. <br>, <|special|> model tokens)
+    t = t.replace(/<[^>]{0,200}>/g, '');
+
+    // Remove emojis — covers Emoji_Presentation + Extended_Pictographic ranges
+    // These Unicode property escapes require ES2018+ (supported in Electron/Chrome)
+    t = t.replace(/\p{Emoji_Presentation}/gu, '');
+    t = t.replace(/\p{Extended_Pictographic}/gu, '');
+
+    // Collapse multiple spaces/tabs but preserve newlines (needed for paragraph mode)
+    t = t.replace(/[ \t]+/g, ' ');
+    t = t.replace(/\n{3,}/g, '\n\n');
+
+    return t.trim();
+}
+
+/**
+ * executeTTS — entry point for all TTS playback.
+ * Routes to native PCM streaming or batch WAV streaming based on settings.
  */
 async function executeTTS(text) {
+    text = _filterTextForTTS(text);
+    if (!text) return;
+
     const persona = state.personasData[state.currentPersonaId];
     if (!persona) return;
 
@@ -92,29 +150,40 @@ async function executeTTS(text) {
     _ttsAbort = abortCtrl;
 
     try {
+        const useNative = getTTSNativeStreaming();
+        const splitMode = getTTSSplitMode();
         let res;
+
         if (persona.ttsMode === 'voice_clone') {
             const selectedAudio = (persona.ttsVoiceClone?.refAudios || []).find(a => a.selected);
             if (!selectedAudio) {
-                console.error('TTS: No reference audio selected for voice clone. Select one in the Persona editor.');
+                console.error('TTS: No reference audio selected for voice clone.');
                 return;
             }
             if (!selectedAudio.exists) {
-                console.error(`TTS: Reference audio "${selectedAudio.filename}" is missing on the server. Please re-upload it.`);
+                console.error(`TTS: Reference audio "${selectedAudio.filename}" is missing.`);
                 return;
             }
-            res = await api.ttsVoiceCloneStream({
+            const payload = {
                 text,
-                language:        _normLang(persona.ttsVoiceClone.language),
-                ref_audio_path:  selectedAudio.path,
-                ref_text:        selectedAudio.refText || '',
-            });
+                language:       _normLang(persona.ttsVoiceClone.language),
+                ref_audio_path: selectedAudio.path,
+                ref_text:       selectedAudio.refText || '',
+                split_mode:     splitMode,
+            };
+            res = useNative
+                ? await api.ttsVoiceCloneStreamNative(payload)
+                : await api.ttsVoiceCloneStream(payload);
         } else {
-            res = await api.ttsVoiceDesignStream({
+            const payload = {
                 text,
-                language: _normLang(persona.ttsVoiceDesign.language),
-                instruct:  persona.ttsVoiceDesign.instruct,
-            });
+                language:   _normLang(persona.ttsVoiceDesign.language),
+                instruct:   persona.ttsVoiceDesign.instruct,
+                split_mode: splitMode,
+            };
+            res = useNative
+                ? await api.ttsVoiceDesignStreamNative(payload)
+                : await api.ttsVoiceDesignStream(payload);
         }
 
         if (!res.ok) {
@@ -122,58 +191,11 @@ async function executeTTS(text) {
             return;
         }
 
-        const reader = res.body.getReader();
-        let buf = new Uint8Array(0);
-
-        // Sequential playback queue — each .then() waits for the previous chunk
-        // to finish before starting the next, so chunks play gaplessly in order.
-        let playChain = Promise.resolve();
-        let nextStart = 0;   // Shared: updated by each chain item before the next reads it
-
-        while (true) {
-            if (abortCtrl.signal.aborted) break;
-
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            // Append newly received bytes to our accumulation buffer
-            const merged = new Uint8Array(buf.length + value.length);
-            merged.set(buf, 0);
-            merged.set(value, buf.length);
-            buf = merged;
-
-            // Parse and schedule all complete frames in the buffer
-            while (buf.length >= 4) {
-                const frameLen = (buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3];
-                if (buf.length < 4 + frameLen) break;   // Incomplete frame — wait
-
-                const wavBytes = buf.slice(4, 4 + frameLen).buffer;
-                buf = buf.slice(4 + frameLen);
-
-                // Chain: each item reads nextStart after the previous item updated it,
-                // ensuring correct gapless scheduling even when chunks arrive in bursts.
-                playChain = playChain.then(async () => {
-                    if (abortCtrl.signal.aborted) return;
-                    try {
-                        const audioBuffer = await ctx.decodeAudioData(wavBytes);
-                        const source = ctx.createBufferSource();
-                        source.buffer = audioBuffer;
-                        source.connect(ctx.destination);
-                        _ttsSource = source;
-
-                        const when = Math.max(ctx.currentTime, nextStart);
-                        source.start(when);
-                        nextStart = when + audioBuffer.duration;   // for next chunk
-
-                        await new Promise(resolve => { source.onended = resolve; });
-                    } catch (e) {
-                        console.error('TTS chunk decode/play error:', e);
-                    }
-                });
-            }
+        if (useNative) {
+            await _playNativeStream(res, ctx, abortCtrl);
+        } else {
+            await _playBatchStream(res, ctx, abortCtrl);
         }
-
-        await playChain;   // Wait for last chunk to finish playing
     } catch (err) {
         if (err.name !== 'AbortError') {
             console.error('TTS playback error:', err);
@@ -181,6 +203,152 @@ async function executeTTS(text) {
     } finally {
         if (_ttsAbort === abortCtrl) _ttsAbort = null;
     }
+}
+
+/**
+ * _playBatchStream — plays sentence-level WAV chunks from the batch streaming endpoints.
+ * Wire format: [4-byte uint32 BE length][WAV bytes]  repeated per sentence.
+ *
+ * Scheduling model: chunks are pre-scheduled in the Web Audio timeline as soon as
+ * they are decoded — no waiting for the previous chunk to finish playing.
+ * nextStart tracks the scheduled end-time of the last chunk so the next one can
+ * be placed immediately after it with zero gap.
+ */
+async function _playBatchStream(res, ctx, abortCtrl) {
+    const reader = res.body.getReader();
+    let buf = new Uint8Array(0);
+    // schedulingChain serialises decodeAudioData calls and nextStart updates.
+    // Each item resolves as soon as source.start() is called — NOT after onended.
+    let schedulingChain = Promise.resolve();
+    let lastSourcePromise = Promise.resolve();   // tracks when the final chunk ends
+    let nextStart = 0;
+
+    while (true) {
+        if (abortCtrl.signal.aborted) break;
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const merged = new Uint8Array(buf.length + value.length);
+        merged.set(buf);
+        merged.set(value, buf.length);
+        buf = merged;
+
+        while (buf.length >= 4) {
+            const frameLen = (buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3];
+            if (buf.length < 4 + frameLen) break;
+
+            const wavBytes = buf.slice(4, 4 + frameLen).buffer;
+            buf = buf.slice(4 + frameLen);
+
+            schedulingChain = schedulingChain.then(async () => {
+                if (abortCtrl.signal.aborted) return;
+                try {
+                    const audioBuffer = await ctx.decodeAudioData(wavBytes);
+                    const source = ctx.createBufferSource();
+                    source.buffer = audioBuffer;
+                    source.connect(_getGainNode(ctx));
+                    _ttsSource = source;
+                    const when = Math.max(ctx.currentTime, nextStart);
+                    source.start(when);
+                    nextStart = when + audioBuffer.duration;
+                    // Record end-of-last-chunk promise; do NOT await here so the next
+                    // chunk gets scheduled without waiting for this one to finish.
+                    lastSourcePromise = new Promise(resolve => { source.onended = resolve; });
+                } catch (e) {
+                    console.error('TTS WAV chunk error:', e);
+                }
+            });
+        }
+    }
+    await schedulingChain;       // all chunks scheduled
+    await lastSourcePromise;     // last chunk finished playing
+}
+
+/**
+ * _playNativeStream — plays raw float32 PCM frames from the native streaming endpoints.
+ * Wire format:
+ *   Header : b'PCM\0' (4) + uint32 BE sample_rate (4) + uint32 BE channels (4)
+ *   Frames : uint32 BE byte_length (4) + float32 LE PCM bytes  (repeated)
+ */
+async function _playNativeStream(res, ctx, abortCtrl) {
+    const reader = res.body.getReader();
+    let buf = new Uint8Array(0);
+    let sampleRate = null;
+    let channels = null;
+    let headerParsed = false;
+    // Same eager-scheduling pattern as _playBatchStream: no onended inside the chain.
+    let schedulingChain = Promise.resolve();
+    let lastSourcePromise = Promise.resolve();
+    let nextStart = 0;
+
+    const PCM_MAGIC = 0x50434D00;  // b'PCM\0'
+
+    while (true) {
+        if (abortCtrl.signal.aborted) break;
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const merged = new Uint8Array(buf.length + value.length);
+        merged.set(buf);
+        merged.set(value, buf.length);
+        buf = merged;
+
+        // Parse 12-byte header on first receive
+        if (!headerParsed) {
+            if (buf.length < 12) continue;
+            const hdr = new DataView(buf.buffer.slice(buf.byteOffset, buf.byteOffset + 12));
+            if (hdr.getUint32(0, false) !== PCM_MAGIC) {
+                console.error('TTS native: unexpected stream magic');
+                break;
+            }
+            sampleRate = hdr.getUint32(4, false);
+            channels   = hdr.getUint32(8, false);
+            buf = buf.slice(12);
+            headerParsed = true;
+        }
+
+        // Parse PCM frames
+        while (buf.length >= 4) {
+            const frameLen = new DataView(
+                buf.buffer.slice(buf.byteOffset, buf.byteOffset + 4)
+            ).getUint32(0, false);
+            if (buf.length < 4 + frameLen) break;
+
+            const frameSlice = buf.slice(4, 4 + frameLen);
+            buf = buf.slice(4 + frameLen);
+
+            // Copy bytes into a fresh ArrayBuffer before handing off to the chain
+            const pcmBuf = frameSlice.buffer.slice(
+                frameSlice.byteOffset,
+                frameSlice.byteOffset + frameSlice.byteLength
+            );
+            const capturedSr = sampleRate;
+            const capturedCh = channels;
+
+            schedulingChain = schedulingChain.then(() => {
+                if (abortCtrl.signal.aborted) return;
+                // PCM → AudioBuffer is fully synchronous; no async decode needed.
+                const float32 = new Float32Array(pcmBuf);
+                const numFrames = Math.floor(float32.length / capturedCh);
+                const audioBuf = ctx.createBuffer(capturedCh, numFrames, capturedSr);
+                for (let ch = 0; ch < capturedCh; ch++) {
+                    audioBuf.copyToChannel(
+                        float32.subarray(ch * numFrames, (ch + 1) * numFrames), ch
+                    );
+                }
+                const source = ctx.createBufferSource();
+                source.buffer = audioBuf;
+                source.connect(_getGainNode(ctx));
+                _ttsSource = source;
+                const when = Math.max(ctx.currentTime, nextStart);
+                source.start(when);
+                nextStart = when + audioBuf.duration;
+                lastSourcePromise = new Promise(resolve => { source.onended = resolve; });
+            });
+        }
+    }
+    await schedulingChain;       // all chunks scheduled
+    await lastSourcePromise;     // last chunk finished playing
 }
 
 // ==========================================
@@ -214,10 +382,12 @@ function _normLang(lang) {
     return v === 'auto' ? 'Auto' : v;
 }
 
-/** Auto-play after AI response — respects the TTS toggle. */
+/** Auto-play after AI response — filters text then respects the TTS toggle. */
 async function requestTTS(text) {
     if (!state.ttsEnabled) return;
-    await executeTTS(text);
+    const filtered = _filterTextForTTS(text);
+    if (!filtered) return;
+    await executeTTS(filtered);
 }
 
 // ==========================================

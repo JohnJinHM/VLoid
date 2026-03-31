@@ -2,7 +2,8 @@ import { CharacterCard } from "https://esm.run/@lenml/char-card-reader";
 import { state } from '../store.js';
 import { api } from '../api.js';
 
-const API_BASE = "http://127.0.0.1:3000";
+// Electron 32+ removed file.path; use webUtils.getPathForFile instead.
+const { webUtils } = require('electron');
 
 // 视图与导航
 const chatView     = document.getElementById('chat-view');
@@ -119,10 +120,13 @@ function updateTTSMode(mode) {
 // ============== Multi-audio management ==============
 
 /**
- * Called when the user selects one or more files via the file picker.
- * Uploads each file to the server, gets back a path, and adds it to the list.
+ * Called when the user selects one or more files via the OS file picker.
+ *
+ * In Electron, `file.path` exposes the absolute filesystem path of the
+ * selected file, so we store that directly — no HTTP upload needed.
+ * The backend reads the file from this path during inference.
  */
-async function handleAudioFilesSelected(e) {
+function handleAudioFilesSelected(e) {
     const files = Array.from(e.target.files);
     if (!files.length) return;
 
@@ -135,51 +139,26 @@ async function handleAudioFilesSelected(e) {
             alert(`Unsupported format: ${file.name}. Use WAV, MP3, OGG, or FLAC.`);
             continue;
         }
-        if (file.size > 50 * 1024 * 1024) {
-            alert(`File too large: ${file.name}. Max 50 MB.`);
+
+        const filePath = webUtils.getPathForFile(file);  // Electron 32+: absolute OS path
+        if (!filePath) {
+            alert(`Could not read file path for "${file.name}". Make sure you are running in Electron.`);
             continue;
         }
 
-        // Show a temporary uploading entry
-        const tempId = 'uploading_' + Date.now();
+        const isFirst = p.ttsVoiceClone.refAudios.filter(a => a.selected).length === 0;
         p.ttsVoiceClone.refAudios.push({
-            id: tempId, filename: file.name, path: '', refText: '', selected: false,
-            exists: false, _uploading: true,
+            id:       'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9),
+            filename: file.name,
+            path:     filePath,   // absolute OS path — served directly by the local backend
+            refText:  '',
+            selected: isFirst,
+            exists:   true,
         });
-        renderRefAudioList(p);
-
-        try {
-            const formData = new FormData();
-            formData.append('file', file);
-            const result = await api.uploadRefAudio(formData);
-
-            // Replace temp entry with the real one
-            const entryIdx = p.ttsVoiceClone.refAudios.findIndex(a => a.id === tempId);
-            if (entryIdx !== -1) {
-                // Auto-select if this is the first audio
-                const isFirst = p.ttsVoiceClone.refAudios.filter(a => !a._uploading).length === 0
-                    && p.ttsVoiceClone.refAudios.filter(a => a.selected).length === 0;
-                p.ttsVoiceClone.refAudios[entryIdx] = {
-                    id:       result.id,
-                    filename: result.filename,
-                    path:     result.path,
-                    refText:  '',
-                    selected: isFirst,
-                    exists:   true,
-                };
-            }
-        } catch (err) {
-            console.error('Upload failed:', err);
-            // Remove the failed temp entry
-            p.ttsVoiceClone.refAudios = p.ttsVoiceClone.refAudios.filter(a => a.id !== tempId);
-            alert(`Failed to upload ${file.name}: ${err.message}`);
-        }
-
-        renderRefAudioList(p);
-        markUnsaved();
     }
 
-    // Reset file input so the same file can be re-selected if needed
+    renderRefAudioList(p);
+    markUnsaved();
     vcAudioFileInput.value = '';
 }
 
@@ -213,7 +192,9 @@ function renderRefAudioList(persona) {
             ? `<span class="vc-audio-missing-badge" title="File not found on server — please re-upload">⚠ File missing</span>`
             : '';
 
-        const audioUrl = audio.path ? `${API_BASE}/api/tts/ref-audio/${_filenameFromPath(audio.path)}` : '';
+        // Convert absolute OS path → file:// URL for the <audio> preview element.
+        // Electron's renderer can load local files directly via the file:// protocol.
+        const audioUrl = audio.path ? _pathToFileUrl(audio.path) : '';
 
         entry.innerHTML = `
             <div class="vc-audio-entry-header">
@@ -259,27 +240,14 @@ function renderRefAudioList(persona) {
     });
 }
 
-async function handleDeleteAudio(audioId) {
+function handleDeleteAudio(audioId) {
     const p = state.personasData[state.currentPersonaId];
     if (!p?.ttsVoiceClone) return;
 
-    const audio = p.ttsVoiceClone.refAudios.find(a => a.id === audioId);
-    if (!audio) return;
-
-    // Delete the file from the server
-    if (audio.path) {
-        try {
-            await api.deleteRefAudio(_filenameFromPath(audio.path));
-        } catch (err) {
-            console.warn('Server-side delete failed:', err);
-        }
-    }
-
     p.ttsVoiceClone.refAudios = p.ttsVoiceClone.refAudios.filter(a => a.id !== audioId);
 
-    // If the deleted audio was selected, auto-select the first remaining one
-    const hasSelected = p.ttsVoiceClone.refAudios.some(a => a.selected);
-    if (!hasSelected && p.ttsVoiceClone.refAudios.length > 0) {
+    // Auto-select the first remaining entry if the deleted one was selected
+    if (!p.ttsVoiceClone.refAudios.some(a => a.selected) && p.ttsVoiceClone.refAudios.length > 0) {
         p.ttsVoiceClone.refAudios[0].selected = true;
     }
 
@@ -287,8 +255,16 @@ async function handleDeleteAudio(audioId) {
     markUnsaved();
 }
 
-function _filenameFromPath(path) {
-    return path.split('/').pop();
+/**
+ * Convert an absolute OS path (Windows or Unix) to a file:// URL
+ * suitable for use in <audio src="...">.
+ */
+function _pathToFileUrl(p) {
+    if (!p) return '';
+    if (p.startsWith('file://') || p.startsWith('http')) return p;
+    // Windows: C:\path\to\file  →  file:///C:/path/to/file
+    // Unix:    /path/to/file    →  file:///path/to/file
+    return 'file:///' + p.replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
 function _escHtml(str) {

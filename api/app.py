@@ -9,23 +9,32 @@ from core.logger import get_logger
 
 logger = get_logger("App")
 
-
-async def preload_tts(svc):
-    """Load the VoiceDesign model weights in a thread pool at startup."""
-    try:
-        svc = init_tts_service()
-        logger.info("TTS VoiceDesign model preloaded successfully.")
-    except Exception as e:
-        logger.error(f"TTS preload failed: {e}")
+# Set once in lifespan after all startup tasks complete.
+# The Electron frontend polls GET /api/ready and shows its window when this fires.
+_ready_event: asyncio.Event | None = None
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    svc = init_tts_service()
-    # Kick off model loading immediately without blocking API startup
-    asyncio.create_task(preload_tts(svc))
-    logger.info("TTS model preload started in background.")
+async def lifespan(_: FastAPI):
+    """
+    Startup: block until the TTS VoiceDesign model is fully loaded, then set
+    _ready_event so the Electron frontend knows it can show its window.
+    Shutdown: log teardown (individual services clean up their own resources).
+    """
+    global _ready_event
+    _ready_event = asyncio.Event()
+
+    logger.info("Loading TTS VoiceDesign model — server will be ready once loading completes…")
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, init_tts_service)
+
+    _ready_event.set()
+    logger.info("TTS model loaded. Server is now fully ready.")
+
     yield
+
+    logger.info("Server shutting down.")
+    _ready_event.clear()
 
 
 def create_app() -> FastAPI:
@@ -36,7 +45,6 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # 允许 Electron 跨域请求
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -45,7 +53,6 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # 注册路由
     app.include_router(chat.router)
     app.include_router(sessions.router)
     app.include_router(personas.router)
@@ -53,3 +60,15 @@ def create_app() -> FastAPI:
     return app
 
 app = create_app()
+
+
+@app.get("/api/ready")
+def api_ready():
+    """
+    Lightweight readiness probe polled by the Electron frontend on startup.
+    Returns ready=true only after the full lifespan startup (TTS load) completes.
+    Because the lifespan blocks uvicorn from accepting requests until startup
+    finishes, _ready_event is always set by the time any request reaches here.
+    The explicit flag is kept for clarity and future extensibility.
+    """
+    return {"ready": _ready_event is not None and _ready_event.is_set()}

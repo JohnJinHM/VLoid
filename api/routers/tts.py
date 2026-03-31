@@ -1,12 +1,11 @@
 import asyncio
 import os
 import re
-import uuid as uuid_module
+import struct
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from fastapi.responses import Response, StreamingResponse, FileResponse
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -20,16 +19,6 @@ router = APIRouter(prefix="/api/tts", tags=["TTS"])
 # Thread pool for blocking TTS inference so the event loop stays free
 _tts_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts")
 
-# Directory where reference audio files are stored on disk
-_PROJECT_ROOT = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-REF_AUDIO_DIR = _PROJECT_ROOT / "data" / "ref_audio"
-REF_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-
-ALLOWED_AUDIO_TYPES = {"audio/wav", "audio/mpeg", "audio/ogg", "audio/flac",
-                       "audio/x-wav", "audio/x-flac"}
-ALLOWED_AUDIO_EXTS  = {"wav", "mp3", "ogg", "flac"}
-MAX_AUDIO_SIZE      = 50 * 1024 * 1024   # 50 MB
-
 
 # ------------------------------------------------------------------
 # Request schemas
@@ -39,13 +28,15 @@ class VoiceDesignRequest(BaseModel):
     text: str
     instruct: str = ""
     language: Optional[str] = "Auto"
+    split_mode: Optional[str] = "sentence"   # whole | sentence | punctuation | paragraph
 
 
 class VoiceCloneRequest(BaseModel):
     text: str
-    ref_audio_path: str    # Relative path on the server (from project root)
+    ref_audio_path: str    # Absolute OS path to the reference audio file
     ref_text: str = ""
     language: Optional[str] = "Auto"
+    split_mode: Optional[str] = "sentence"
 
 
 # ------------------------------------------------------------------
@@ -59,32 +50,69 @@ def require_tts() -> TTSService:
     return svc
 
 
-def _split_sentences(text: str) -> list[str]:
-    """Split text into sentences for streaming playback."""
-    parts = re.split(r'(?<=[.!?。！？\n])\s*', text)
-    return [s.strip() for s in parts if s.strip()] or [text.strip()]
+def _resolve_ref_audio(path: str) -> str:
+    """
+    Validate that *path* is a non-empty string pointing to an existing file.
+    Accepts any absolute OS path supplied by the local Electron client.
+    """
+    if not path:
+        raise HTTPException(status_code=400, detail="ref_audio_path must not be empty.")
+    if not os.path.isfile(path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Reference audio not found: '{path}'. "
+                   "The file may have been moved or deleted — please re-select it."
+        )
+    return path
+
+
+def _split_text(text: str, mode: str) -> list[str]:
+    """
+    Split *text* into TTS-sized chunks according to *mode*.
+
+    Modes
+    -----
+    whole       — single chunk, no splitting
+    sentence    — split after sentence-ending punctuation: . ! ? 。 ！ ？  (default)
+    punctuation — split after any pause/stop punct, incl. , ， ; ； : ：  …
+    paragraph   — split on blank lines / single newlines
+    """
+    text = text.strip()
+    if not text:
+        return []
+    if mode == "whole":
+        return [text]
+    if mode == "paragraph":
+        parts = re.split(r"\n\s*\n|\n", text)
+        return [s.strip() for s in parts if s.strip()] or [text]
+    if mode == "punctuation":
+        # Sentence-ending: . ! ? 。 ！ ？ …
+        # Clause-ending:   , ; : ， 、 ； ：
+        parts = re.split(r"(?<=[.!?,;:。！？，、；：…])\s*", text)
+        return [s.strip() for s in parts if s.strip()] or [text]
+    # Default: sentence
+    parts = re.split(r"(?<=[.!?。！？])\s*", text)
+    return [s.strip() for s in parts if s.strip()] or [text]
 
 
 def _length_prefix(data: bytes) -> bytes:
     """Prepend a 4-byte big-endian length so the client can parse WAV chunks."""
-    return len(data).to_bytes(4, 'big') + data
+    return len(data).to_bytes(4, "big") + data
 
 
-def _resolve_ref_audio(rel_path: str) -> Path:
-    """
-    Resolve a stored relative path to an absolute Path and verify it is inside
-    REF_AUDIO_DIR to prevent path traversal.
-    """
-    abs_path = (_PROJECT_ROOT / rel_path).resolve()
-    if not abs_path.is_relative_to(REF_AUDIO_DIR.resolve()):
-        raise HTTPException(status_code=400, detail="Invalid audio path.")
-    if not abs_path.is_file():
-        raise HTTPException(
-            status_code=404,
-            detail=f"Reference audio file not found: {rel_path}. "
-                   "The file may have been deleted — please re-upload it."
-        )
-    return abs_path
+# Sentinel used to signal end-of-stream from the producer thread
+_NATIVE_DONE = object()
+
+
+def _pcm_header(sample_rate: int, channels: int) -> bytes:
+    """12-byte stream header: magic b'PCM\\0' + uint32 BE sample_rate + uint32 BE channels."""
+    return b"PCM\x00" + struct.pack(">II", sample_rate, channels)
+
+
+def _pcm_frame(pcm_np) -> bytes:
+    """Length-prefixed float32 PCM frame: uint32 BE byte-length + raw float32 LE bytes."""
+    data = pcm_np.astype("float32").tobytes()
+    return struct.pack(">I", len(data)) + data
 
 
 # ------------------------------------------------------------------
@@ -99,11 +127,10 @@ def tts_status():
     return {"service": "ok", **svc.get_status()}
 
 
-# ── Non-streaming inference ──────────────────────────────────────
+# ── Non-streaming ─────────────────────────────────────────────────
 
 @router.post("/voice-design")
 def tts_voice_design(req: VoiceDesignRequest, svc: TTSService = Depends(require_tts)):
-    """VoiceDesign: returns complete audio/wav binary."""
     try:
         wav_bytes = svc.voice_design(
             text=req.text, instruct=req.instruct, language=req.language or "Auto"
@@ -116,14 +143,11 @@ def tts_voice_design(req: VoiceDesignRequest, svc: TTSService = Depends(require_
 
 @router.post("/voice-clone")
 def tts_voice_clone(req: VoiceCloneRequest, svc: TTSService = Depends(require_tts)):
-    """VoiceClone: returns complete audio/wav binary."""
-    abs_path = _resolve_ref_audio(req.ref_audio_path)
+    path = _resolve_ref_audio(req.ref_audio_path)
     try:
         wav_bytes = svc.voice_clone(
-            text=req.text,
-            ref_audio_path=str(abs_path),
-            ref_text=req.ref_text,
-            language=req.language or "Auto",
+            text=req.text, ref_audio_path=path,
+            ref_text=req.ref_text, language=req.language or "Auto",
         )
         return Response(content=wav_bytes, media_type="audio/wav")
     except Exception as e:
@@ -131,19 +155,17 @@ def tts_voice_clone(req: VoiceCloneRequest, svc: TTSService = Depends(require_tt
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Streaming inference ───────────────────────────────────────────
+# ── Streaming ─────────────────────────────────────────────────────
 
 @router.post("/voice-design/stream")
 async def tts_voice_design_stream(
     req: VoiceDesignRequest, svc: TTSService = Depends(require_tts)
 ):
     """
-    Streaming VoiceDesign: splits text into sentences, yields each as a
-    length-prefixed WAV chunk so the client can start playing immediately.
-
-    Frame format: [4-byte uint32 BE length][WAV bytes]
+    Streaming VoiceDesign: splits text per split_mode, yields each chunk as
+    [4-byte uint32 BE length][WAV bytes].
     """
-    sentences = _split_sentences(req.text)
+    sentences = _split_text(req.text, req.split_mode or "sentence")
     loop = asyncio.get_event_loop()
 
     async def generate():
@@ -163,6 +185,52 @@ async def tts_voice_design_stream(
     return StreamingResponse(generate(), media_type="application/octet-stream")
 
 
+# ── Native streaming (model frame-level) ──────────────────────────
+
+@router.post("/voice-design/stream-native")
+async def tts_voice_design_stream_native(
+    req: VoiceDesignRequest, svc: TTSService = Depends(require_tts)
+):
+    """
+    Native-streaming VoiceDesign: the model emits raw float32 PCM frames as they
+    are decoded.  Wire format:
+        Header  — b'PCM\\0' + uint32 BE sample_rate + uint32 BE channels  (12 bytes)
+        Frames  — uint32 BE byte_length + float32 LE PCM bytes  (repeated)
+    """
+    sentences = _split_text(req.text, req.split_mode or "sentence")
+    loop = asyncio.get_running_loop()
+    q: asyncio.Queue = asyncio.Queue()
+
+    def _produce():
+        try:
+            for sentence in sentences:
+                for chunk, sr in svc.stream_voice_design_sentence(
+                    text=sentence,
+                    instruct=req.instruct,
+                    language=req.language or "Auto",
+                ):
+                    loop.call_soon_threadsafe(q.put_nowait, (chunk, sr))
+        except Exception as e:
+            logger.error(f"voice-design/stream-native error: {e}", exc_info=True)
+        finally:
+            loop.call_soon_threadsafe(q.put_nowait, _NATIVE_DONE)
+
+    async def generate():
+        _tts_executor.submit(_produce)
+        header_sent = False
+        while True:
+            item = await q.get()
+            if item is _NATIVE_DONE:
+                break
+            chunk, sr = item
+            if not header_sent:
+                yield _pcm_header(sr, 1)
+                header_sent = True
+            yield _pcm_frame(chunk)
+
+    return StreamingResponse(generate(), media_type="application/octet-stream")
+
+
 @router.post("/voice-clone/stream")
 async def tts_voice_clone_stream(
     req: VoiceCloneRequest, svc: TTSService = Depends(require_tts)
@@ -170,9 +238,8 @@ async def tts_voice_clone_stream(
     """
     Streaming VoiceClone: same sentence-level streaming as voice-design/stream.
     """
-    abs_path = _resolve_ref_audio(req.ref_audio_path)
-    abs_path_str = str(abs_path)
-    sentences = _split_sentences(req.text)
+    path = _resolve_ref_audio(req.ref_audio_path)
+    sentences = _split_text(req.text, req.split_mode or "sentence")
     loop = asyncio.get_event_loop()
 
     async def generate():
@@ -181,10 +248,8 @@ async def tts_voice_clone_stream(
                 wav_bytes = await loop.run_in_executor(
                     _tts_executor,
                     lambda s=sentence: svc.voice_clone(
-                        text=s,
-                        ref_audio_path=abs_path_str,
-                        ref_text=req.ref_text,
-                        language=req.language or "Auto",
+                        text=s, ref_audio_path=path,
+                        ref_text=req.ref_text, language=req.language or "Auto",
                     )
                 )
                 yield _length_prefix(wav_bytes)
@@ -195,73 +260,42 @@ async def tts_voice_clone_stream(
     return StreamingResponse(generate(), media_type="application/octet-stream")
 
 
-# ── Reference audio file management ──────────────────────────────
+@router.post("/voice-clone/stream-native")
+async def tts_voice_clone_stream_native(
+    req: VoiceCloneRequest, svc: TTSService = Depends(require_tts)
+):
+    """Native-streaming VoiceClone — same wire format as voice-design/stream-native."""
+    path = _resolve_ref_audio(req.ref_audio_path)
+    sentences = _split_text(req.text, req.split_mode or "sentence")
+    loop = asyncio.get_running_loop()
+    q: asyncio.Queue = asyncio.Queue()
 
-@router.post("/upload-ref-audio")
-async def upload_ref_audio(file: UploadFile = File(...)):
-    """
-    Upload a reference audio file. The file is saved to disk and a
-    server-relative path is returned for storage in the persona.
+    def _produce():
+        try:
+            for sentence in sentences:
+                for chunk, sr in svc.stream_voice_clone_sentence(
+                    text=sentence,
+                    ref_audio_path=path,
+                    ref_text=req.ref_text,
+                    language=req.language or "Auto",
+                ):
+                    loop.call_soon_threadsafe(q.put_nowait, (chunk, sr))
+        except Exception as e:
+            logger.error(f"voice-clone/stream-native error: {e}", exc_info=True)
+        finally:
+            loop.call_soon_threadsafe(q.put_nowait, _NATIVE_DONE)
 
-    Returns:
-      {
-        "id": "<uuid>",
-        "filename": "<original name>",
-        "path": "data/ref_audio/<uuid>.<ext>",
-        "url": "/api/tts/ref-audio/<uuid>.<ext>"
-      }
-    """
-    content_type = (file.content_type or "").lower()
-    filename = file.filename or "audio"
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    async def generate():
+        _tts_executor.submit(_produce)
+        header_sent = False
+        while True:
+            item = await q.get()
+            if item is _NATIVE_DONE:
+                break
+            chunk, sr = item
+            if not header_sent:
+                yield _pcm_header(sr, 1)
+                header_sent = True
+            yield _pcm_frame(chunk)
 
-    if content_type not in ALLOWED_AUDIO_TYPES and ext not in ALLOWED_AUDIO_EXTS:
-        raise HTTPException(
-            status_code=415,
-            detail=f"Unsupported format '{content_type}'. Allowed: wav, mp3, ogg, flac."
-        )
-
-    raw = await file.read()
-    if len(raw) > MAX_AUDIO_SIZE:
-        raise HTTPException(status_code=413, detail="File exceeds 50 MB limit.")
-
-    # Save with a UUID name to avoid collisions
-    audio_id  = str(uuid_module.uuid4())
-    safe_ext  = ext if ext in ALLOWED_AUDIO_EXTS else "wav"
-    save_name = f"{audio_id}.{safe_ext}"
-    save_path = REF_AUDIO_DIR / save_name
-    save_path.write_bytes(raw)
-
-    rel_path = f"data/ref_audio/{save_name}"
-    logger.info(f"Saved ref audio: {rel_path} ({len(raw)} bytes, original: {filename})")
-
-    return {
-        "id":       audio_id,
-        "filename": filename,
-        "path":     rel_path,
-        "url":      f"/api/tts/ref-audio/{save_name}",
-    }
-
-
-@router.get("/ref-audio/{audio_filename}")
-async def serve_ref_audio(audio_filename: str):
-    """Serve a stored reference audio file for browser preview."""
-    # Sanitise: only allow UUID.ext filenames (no path traversal)
-    if not re.match(r'^[0-9a-f\-]+\.[a-z0-9]+$', audio_filename, re.IGNORECASE):
-        raise HTTPException(status_code=400, detail="Invalid filename.")
-    file_path = REF_AUDIO_DIR / audio_filename
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="Audio file not found.")
-    return FileResponse(str(file_path))
-
-
-@router.delete("/ref-audio/{audio_filename}")
-async def delete_ref_audio(audio_filename: str):
-    """Delete a stored reference audio file."""
-    if not re.match(r'^[0-9a-f\-]+\.[a-z0-9]+$', audio_filename, re.IGNORECASE):
-        raise HTTPException(status_code=400, detail="Invalid filename.")
-    file_path = REF_AUDIO_DIR / audio_filename
-    if file_path.is_file():
-        file_path.unlink()
-        logger.info(f"Deleted ref audio: {audio_filename}")
-    return {"status": "ok"}
+    return StreamingResponse(generate(), media_type="application/octet-stream")

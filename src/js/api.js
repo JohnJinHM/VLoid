@@ -86,31 +86,6 @@ export const api = {
     },
 
     /**
-     * Upload a reference audio file to the server.
-     * Returns: { id, filename, path, url }
-     * The `path` is stored in the persona; `url` can be used for <audio> preview.
-     */
-    async uploadRefAudio(formData) {
-        const res = await fetch(`${API_BASE}/api/tts/upload-ref-audio`, {
-            method: 'POST',
-            body: formData,
-        });
-        if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-        return res.json();
-    },
-
-    /**
-     * Delete a stored reference audio file from the server.
-     * audioFilename: the UUID-based filename (e.g. "abc123.wav")
-     */
-    async deleteRefAudio(audioFilename) {
-        const res = await fetch(`${API_BASE}/api/tts/ref-audio/${audioFilename}`, {
-            method: 'DELETE',
-        });
-        return res.json();
-    },
-
-    /**
      * TTS via VoiceDesign mode — returns a streaming fetch Response.
      * Frame format: [4-byte uint32 BE length][WAV bytes] repeated per sentence.
      * payload: { text, language, instruct }
@@ -130,6 +105,30 @@ export const api = {
      */
     async ttsVoiceCloneStream(payload) {
         return fetch(`${API_BASE}/api/tts/voice-clone/stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+    },
+
+    /**
+     * Native-streaming VoiceDesign — model emits raw float32 PCM frames.
+     * Wire format: 12-byte header (b'PCM\0' + uint32 BE sr + uint32 BE ch),
+     *              then [uint32 BE len][float32 LE PCM bytes] per frame.
+     */
+    async ttsVoiceDesignStreamNative(payload) {
+        return fetch(`${API_BASE}/api/tts/voice-design/stream-native`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+    },
+
+    /**
+     * Native-streaming VoiceClone — same wire format as ttsVoiceDesignStreamNative.
+     */
+    async ttsVoiceCloneStreamNative(payload) {
+        return fetch(`${API_BASE}/api/tts/voice-clone/stream-native`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),

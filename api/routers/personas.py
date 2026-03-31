@@ -9,8 +9,6 @@ from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/personas", tags=["Personas"])
 
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-
 
 # ------------------------------------------------------------------
 # Schemas
@@ -49,7 +47,11 @@ class PersonaSchema(BaseModel):
 # ------------------------------------------------------------------
 
 def _check_audio_exists(path: str) -> bool:
-    return os.path.isfile(os.path.join(_PROJECT_ROOT, path))
+    """
+    Check whether the reference audio file still exists.
+    *path* is now an absolute OS path stored by the Electron client.
+    """
+    return bool(path) and os.path.isfile(path)
 
 
 def _row_to_dict(p: PersonaDB) -> dict:

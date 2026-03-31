@@ -17,7 +17,7 @@ class ColorFormatter(logging.Formatter):
     COLORS = {
         "System": "\033[96m",  # Cyan
         "vLLM": "\033[92m",    # Green
-        "llama.cpp": "\033[94m", # Blue
+        "llama.cpp": "\033[36m", # Blue
         "WebUI": "\033[95m",   # Magenta
         "WARNING": "\033[93m", # Yellow
         "ERROR": "\033[91m",   # Red
@@ -26,6 +26,7 @@ class ColorFormatter(logging.Formatter):
         "TTSRouter": "\033[95m",
         "APIServer": "\033[96m", # Cyan
         "App": "\033[92m", # Green
+        "Electron": "\033[94m", # Blue
         "RESET": "\033[0m"
     }
 
