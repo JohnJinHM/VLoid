@@ -1,6 +1,5 @@
-import base64
 import io
-import re
+import os
 from threading import Lock
 
 import torch
@@ -120,9 +119,6 @@ class TTSService:
     # Inference
     # ------------------------------------------------------------------
 
-    def _strip_data_uri(self, b64_str: str) -> str:
-        return re.sub(r'^data:audio/[a-zA-Z0-9+-]+;base64,', '', b64_str)
-
     def voice_design(self, text: str, instruct: str, language: str) -> bytes:
         """Generate speech from text + natural-language voice description."""
         if not self.vd_loaded:
@@ -139,19 +135,32 @@ class TTSService:
         wavs, sr = self.design_model.generate_voice_design(**kwargs)
         return self._numpy_to_wav_bytes(wavs[0], sr)
 
-    def voice_clone(self, text: str, ref_audio_b64: str, ref_text: str, language: str) -> bytes:
-        """Clone a voice from reference audio and synthesise text."""
+    def voice_clone(self, text: str, ref_audio_path: str, ref_text: str, language: str) -> bytes:
+        """
+        Clone a voice from a reference audio file and synthesise text.
+
+        ``ref_audio_path`` must be an absolute path to an audio file on disk.
+
+        The original implementation passed a base64 string directly to the
+        model, which interprets plain strings as file paths.  That caused the
+        model to try opening the base64 chars as a filename, fail silently, and
+        produce garbled output.  Reading the file to bytes here and passing the
+        bytes object is the correct call convention.
+        """
         if not self.vd_loaded:
             raise RuntimeError("TTS service failed to initialise.")
 
         self._ensure_clone_loaded()
-        logger.info(f"voice_clone — lang={language}, chars={len(text)}")
+        logger.info(f"voice_clone — lang={language}, chars={len(text)}, audio={ref_audio_path}")
 
-        clean_b64 = self._strip_data_uri(ref_audio_b64)
+        if not os.path.isfile(ref_audio_path):
+            raise RuntimeError(f"Reference audio file not found: '{ref_audio_path}'")
+
+        # generate_voice_clone expects a file-path string, not bytes.
         wavs, sr = self.clone_model.generate_voice_clone(
             text=text,
             language=language if language else "Auto",
-            ref_audio=clean_b64,
+            ref_audio=ref_audio_path,   # absolute path string
             ref_text=ref_text,
         )
         return self._numpy_to_wav_bytes(wavs[0], sr)

@@ -94,11 +94,20 @@ async function executeTTS(text) {
     try {
         let res;
         if (persona.ttsMode === 'voice_clone') {
+            const selectedAudio = (persona.ttsVoiceClone?.refAudios || []).find(a => a.selected);
+            if (!selectedAudio) {
+                console.error('TTS: No reference audio selected for voice clone. Select one in the Persona editor.');
+                return;
+            }
+            if (!selectedAudio.exists) {
+                console.error(`TTS: Reference audio "${selectedAudio.filename}" is missing on the server. Please re-upload it.`);
+                return;
+            }
             res = await api.ttsVoiceCloneStream({
                 text,
-                language: _normLang(persona.ttsVoiceClone.language),
-                ref_audio: persona.ttsVoiceClone.refAudioData,
-                ref_text:  persona.ttsVoiceClone.refText,
+                language:        _normLang(persona.ttsVoiceClone.language),
+                ref_audio_path:  selectedAudio.path,
+                ref_text:        selectedAudio.refText || '',
             });
         } else {
             res = await api.ttsVoiceDesignStream({

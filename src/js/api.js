@@ -13,20 +13,18 @@ export const api = {
         const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, { method: 'DELETE' });
         return res.json();
     },
-    // 流式对话请求
     async chatStream(payload, signal) {
         return fetch(`${API_BASE}/api/chat/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
-            signal: signal
+            signal,
         });
     },
 
     async getPersonas() {
         const res = await fetch(`${API_BASE}/api/personas/`);
         const personas = await res.json();
-        // Map snake_case API response → camelCase frontend model
         return personas.map(p => ({
             id: p.id,
             name: p.name,
@@ -38,15 +36,21 @@ export const api = {
                 language: p.tts_voice_design?.language || 'auto',
             },
             ttsVoiceClone: {
-                refAudioPath: '',
-                refAudioData: p.tts_voice_clone?.ref_audio || null,
-                refText: p.tts_voice_clone?.ref_text || '',
+                // Each entry: { id, filename, path, refText, selected, exists }
+                refAudios: (p.tts_voice_clone?.ref_audios || []).map(a => ({
+                    id:       a.id,
+                    filename: a.filename,
+                    path:     a.path,
+                    refText:  a.ref_text || '',
+                    selected: a.selected || false,
+                    exists:   a.exists !== false,   // default true if not reported
+                })),
                 language: p.tts_voice_clone?.language || 'auto',
             },
         }));
     },
+
     async savePersona(personaData) {
-        // Map camelCase frontend model → snake_case API payload
         const payload = {
             id: personaData.id,
             name: personaData.name,
@@ -58,27 +62,56 @@ export const api = {
                 language: personaData.ttsVoiceDesign?.language || 'auto',
             },
             tts_voice_clone: {
-                ref_audio: personaData.ttsVoiceClone?.refAudioData || '',
-                ref_text: personaData.ttsVoiceClone?.refText || '',
+                ref_audios: (personaData.ttsVoiceClone?.refAudios || []).map(a => ({
+                    id:       a.id,
+                    filename: a.filename,
+                    path:     a.path,
+                    ref_text: a.refText || '',
+                    selected: a.selected || false,
+                })),
                 language: personaData.ttsVoiceClone?.language || 'auto',
             },
         };
         const res = await fetch(`${API_BASE}/api/personas/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
         });
         return res.json();
     },
+
     async deletePersona(personaId) {
-        const res = await fetch(`${API_BASE}/api/personas/${personaId}`, {
-            method: 'DELETE'
+        const res = await fetch(`${API_BASE}/api/personas/${personaId}`, { method: 'DELETE' });
+        return res.json();
+    },
+
+    /**
+     * Upload a reference audio file to the server.
+     * Returns: { id, filename, path, url }
+     * The `path` is stored in the persona; `url` can be used for <audio> preview.
+     */
+    async uploadRefAudio(formData) {
+        const res = await fetch(`${API_BASE}/api/tts/upload-ref-audio`, {
+            method: 'POST',
+            body: formData,
+        });
+        if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+        return res.json();
+    },
+
+    /**
+     * Delete a stored reference audio file from the server.
+     * audioFilename: the UUID-based filename (e.g. "abc123.wav")
+     */
+    async deleteRefAudio(audioFilename) {
+        const res = await fetch(`${API_BASE}/api/tts/ref-audio/${audioFilename}`, {
+            method: 'DELETE',
         });
         return res.json();
     },
 
     /**
-     * TTS via VoiceDesign mode — returns the streaming fetch Response.
+     * TTS via VoiceDesign mode — returns a streaming fetch Response.
      * Frame format: [4-byte uint32 BE length][WAV bytes] repeated per sentence.
      * payload: { text, language, instruct }
      */
@@ -86,32 +119,20 @@ export const api = {
         return fetch(`${API_BASE}/api/tts/voice-design/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
         });
     },
 
     /**
-     * TTS via Voice Clone mode — returns the streaming fetch Response.
+     * TTS via Voice Clone mode — returns a streaming fetch Response.
      * Frame format: [4-byte uint32 BE length][WAV bytes] repeated per sentence.
-     * payload: { text, language, ref_audio, ref_text }
+     * payload: { text, language, ref_audio_path, ref_text }
      */
     async ttsVoiceCloneStream(payload) {
         return fetch(`${API_BASE}/api/tts/voice-clone/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
         });
     },
-
-    /**
-     * Upload reference audio for voice clone.
-     * Returns: { ref_audio: "<base64>", filename: "..." }
-     */
-    async uploadRefAudio(formData) {
-        const res = await fetch(`${API_BASE}/api/tts/upload-ref-audio`, {
-            method: 'POST',
-            body: formData
-        });
-        return res.json();
-    }
 };

@@ -183,26 +183,24 @@
           <!-- Voice Clone 模式 -->
           <div id="voice-clone-section" class="tts-mode-content hidden">
             <p class="tts-mode-desc">
-              Clone a voice from a short audio sample (3–15 seconds recommended). Powered by
+              Clone a voice from short audio samples (3–15 seconds each recommended). Powered by
               <code>Qwen3-TTS-12Hz-1.7B-Base</code> — upload clean, noise-free reference audio for best results.
+              Select one sample as active for inference.
             </p>
+
+            <!-- Add audio button -->
             <div class="param-group">
-              <label>Reference Audio <span class="param-hint">(WAV, MP3, OGG, FLAC — 3~15s recommended)</span></label>
+              <label>Reference Audios <span class="param-hint">(WAV, MP3, OGG, FLAC — up to 50 MB each)</span></label>
               <div class="vc-audio-row">
-                <button id="vc-audio-upload-btn" class="outline-btn vc-upload-btn">📁 Upload Audio</button>
+                <button id="vc-audio-upload-btn" class="outline-btn vc-upload-btn">📁 Add Reference Audio</button>
                 <input type="file" id="vc-audio-file"
-                  accept="audio/wav,audio/mp3,audio/mpeg,audio/ogg,audio/flac,.wav,.mp3,.ogg,.flac" class="hidden">
-                <span id="vc-audio-status" class="vc-audio-status">No audio uploaded</span>
-                <button id="vc-audio-clear-btn" class="icon-btn vc-clear-btn hidden" title="Clear audio">✕</button>
+                  accept="audio/wav,audio/mp3,audio/mpeg,audio/ogg,audio/flac,.wav,.mp3,.ogg,.flac"
+                  class="hidden" multiple>
               </div>
-              <audio id="vc-audio-preview" controls class="vc-audio-preview hidden"></audio>
+              <!-- Dynamic list of uploaded reference audios -->
+              <div id="vc-audio-list" class="vc-audio-list"></div>
             </div>
-            <div class="param-group">
-              <label>Reference Text <span class="param-hint">(transcript of the reference audio — improves
-                  quality)</span></label>
-              <textarea id="vc-ref-text" rows="2" class="form-input"
-                placeholder="Type the exact words spoken in the reference audio..."></textarea>
-            </div>
+
             <div class="param-group">
               <label>Language</label>
               <select id="vc-language" class="form-input form-select">

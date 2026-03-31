@@ -16,9 +16,7 @@ export const state = {
                 language: 'auto'    // Target language
             },
             ttsVoiceClone: {
-                refAudioPath: '',    // Path/name of uploaded reference audio
-                refAudioData: null,  // Base64 encoded audio data
-                refText: '',         // Transcript of reference audio
+                refAudios: [],       // Array of { id, filename, path, refText, selected, exists }
                 language: 'auto'     // Target language
             }
         }

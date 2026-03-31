@@ -2,74 +2,64 @@ import { CharacterCard } from "https://esm.run/@lenml/char-card-reader";
 import { state } from '../store.js';
 import { api } from '../api.js';
 
+const API_BASE = "http://127.0.0.1:3000";
+
 // 视图与导航
-const chatView = document.getElementById('chat-view');
-const personaView = document.getElementById('persona-view');
+const chatView     = document.getElementById('chat-view');
+const personaView  = document.getElementById('persona-view');
 const settingsView = document.getElementById('settings-view');
-const navChatBtn = document.getElementById('nav-chat-btn');
-const navPersonaBtn = document.getElementById('nav-persona-btn');
+const navChatBtn     = document.getElementById('nav-chat-btn');
+const navPersonaBtn  = document.getElementById('nav-persona-btn');
 const navSettingsBtn = document.getElementById('nav-settings-btn');
 
 // 列表与表单
-const personaListEl = document.getElementById('persona-list');
-const newPersonaBtn = document.getElementById('new-persona-btn');
+const personaListEl   = document.getElementById('persona-list');
+const newPersonaBtn   = document.getElementById('new-persona-btn');
 const personaNameInput = document.getElementById('persona-name');
 const personaDescInput = document.getElementById('persona-desc');
-const rulesContainer = document.getElementById('rules-container');
-const addRuleBtn = document.getElementById('add-rule-btn');
+const rulesContainer  = document.getElementById('rules-container');
+const addRuleBtn      = document.getElementById('add-rule-btn');
 
 // 同步与操作
-const sysPromptInput = document.getElementById('sys-prompt');
+const sysPromptInput      = document.getElementById('sys-prompt');
 const currentPersonaBadge = document.getElementById('current-persona-badge');
-const saveBtn = document.getElementById('save-persona-btn');
-const resetBtn = document.getElementById('reset-persona-btn');
+const saveBtn   = document.getElementById('save-persona-btn');
+const resetBtn  = document.getElementById('reset-persona-btn');
 const deleteBtn = document.getElementById('delete-persona-btn');
 
-// TTS 相关 DOM 元素
-const ttsModeToggle = document.getElementById('tts-mode-toggle');
+// TTS DOM 元素
+const ttsModeToggle      = document.getElementById('tts-mode-toggle');
 const voiceDesignSection = document.getElementById('voice-design-section');
-const voiceCloneSection = document.getElementById('voice-clone-section');
-const vdInstructInput = document.getElementById('vd-instruct');
-const vdLanguageSelect = document.getElementById('vd-language');
-const vcRefTextInput = document.getElementById('vc-ref-text');
-const vcLanguageSelect = document.getElementById('vc-language');
-const vcAudioUploadBtn = document.getElementById('vc-audio-upload-btn');
-const vcAudioFileInput = document.getElementById('vc-audio-file');
-const vcAudioStatus = document.getElementById('vc-audio-status');
-const vcAudioPreview = document.getElementById('vc-audio-preview');
-const vcAudioClearBtn = document.getElementById('vc-audio-clear-btn');
+const voiceCloneSection  = document.getElementById('voice-clone-section');
+const vdInstructInput    = document.getElementById('vd-instruct');
+const vdLanguageSelect   = document.getElementById('vd-language');
+const vcLanguageSelect   = document.getElementById('vc-language');
+const vcAudioUploadBtn   = document.getElementById('vc-audio-upload-btn');
+const vcAudioFileInput   = document.getElementById('vc-audio-file');
+const vcAudioList        = document.getElementById('vc-audio-list');
 
-// 我们需要一个镜像字典来保存从后端拉取的真实数据，用于 Reset 功能
 let savedPersonasData = {};
 
 export async function initPersonaManager() {
-    // 1. 从后端加载数据
     await loadPersonasFromDB();
 
-    // 2. 绑定基础事件
-    navChatBtn.addEventListener('click', () => switchView('chat'));
-    navPersonaBtn.addEventListener('click', () => switchView('persona'));
+    navChatBtn.addEventListener('click',     () => switchView('chat'));
+    navPersonaBtn.addEventListener('click',  () => switchView('persona'));
     navSettingsBtn.addEventListener('click', () => switchView('settings'));
-    newPersonaBtn.addEventListener('click', createNewPersona);
+    newPersonaBtn.addEventListener('click',  createNewPersona);
 
-    // 3. 表单实时绑定 (更新草稿并同步 Chat)
     personaNameInput.addEventListener('input', (e) => updateDraft('name', e.target.value));
     personaDescInput.addEventListener('input', (e) => updateDraft('description', e.target.value));
 
     addRuleBtn.addEventListener('click', () => {
         const p = state.personasData[state.currentPersonaId];
-        if (p) {
-            p.rules.push("");
-            renderRules(p);
-            updateDraft('rules', p.rules);
-        }
+        if (p) { p.rules.push(""); renderRules(p); updateDraft('rules', p.rules); }
     });
 
     rulesContainer.addEventListener('input', (e) => {
         if (e.target.classList.contains('rule-input')) {
-            const index = e.target.dataset.index;
             const p = state.personasData[state.currentPersonaId];
-            p.rules[index] = e.target.value;
+            p.rules[e.target.dataset.index] = e.target.value;
             updateDraft('rules', p.rules);
         }
     });
@@ -77,79 +67,46 @@ export async function initPersonaManager() {
     rulesContainer.addEventListener('click', (e) => {
         const btn = e.target.closest('.delete-rule-btn');
         if (btn) {
-            const index = parseInt(btn.dataset.index, 10);
             const p = state.personasData[state.currentPersonaId];
-            p.rules.splice(index, 1);
+            p.rules.splice(parseInt(btn.dataset.index, 10), 1);
             renderRules(p);
             updateDraft('rules', p.rules);
         }
     });
 
-    // 4. 持久化操作按钮
-    saveBtn.addEventListener('click', handleSave);
-    resetBtn.addEventListener('click', handleReset);
+    saveBtn.addEventListener('click',   handleSave);
+    resetBtn.addEventListener('click',  handleReset);
     deleteBtn.addEventListener('click', handleDelete);
 
-    // 5. TTS 相关事件绑定
     initTTSEvents();
 }
 
-// ============== TTS 事件初始化 ==============
+// ============== TTS 事件 ==============
 
 function initTTSEvents() {
-    // TTS 模式切换开关
     ttsModeToggle.addEventListener('change', (e) => {
         const mode = e.target.checked ? 'voice_clone' : 'voice_design';
         updateTTSMode(mode);
         updateDraft('ttsMode', mode);
     });
 
-    // VoiceDesign instruct 输入
     vdInstructInput.addEventListener('input', (e) => {
         const p = state.personasData[state.currentPersonaId];
-        if (p && p.ttsVoiceDesign) {
-            p.ttsVoiceDesign.instruct = e.target.value;
-            markUnsaved();
-        }
+        if (p?.ttsVoiceDesign) { p.ttsVoiceDesign.instruct = e.target.value; markUnsaved(); }
     });
 
-    // VoiceDesign 语言选择
     vdLanguageSelect.addEventListener('change', (e) => {
         const p = state.personasData[state.currentPersonaId];
-        if (p && p.ttsVoiceDesign) {
-            p.ttsVoiceDesign.language = e.target.value;
-            markUnsaved();
-        }
+        if (p?.ttsVoiceDesign) { p.ttsVoiceDesign.language = e.target.value; markUnsaved(); }
     });
 
-    // Voice Clone 参考文本输入
-    vcRefTextInput.addEventListener('input', (e) => {
-        const p = state.personasData[state.currentPersonaId];
-        if (p && p.ttsVoiceClone) {
-            p.ttsVoiceClone.refText = e.target.value;
-            markUnsaved();
-        }
-    });
-
-    // Voice Clone 语言选择
     vcLanguageSelect.addEventListener('change', (e) => {
         const p = state.personasData[state.currentPersonaId];
-        if (p && p.ttsVoiceClone) {
-            p.ttsVoiceClone.language = e.target.value;
-            markUnsaved();
-        }
+        if (p?.ttsVoiceClone) { p.ttsVoiceClone.language = e.target.value; markUnsaved(); }
     });
 
-    // Voice Clone 音频上传按钮 -> 触发隐藏的 file input
-    vcAudioUploadBtn.addEventListener('click', () => {
-        vcAudioFileInput.click();
-    });
-
-    // Voice Clone 音频文件选择
-    vcAudioFileInput.addEventListener('change', handleAudioFileSelect);
-
-    // Voice Clone 清除音频按钮
-    vcAudioClearBtn.addEventListener('click', clearRefAudio);
+    vcAudioUploadBtn.addEventListener('click', () => vcAudioFileInput.click());
+    vcAudioFileInput.addEventListener('change', handleAudioFilesSelected);
 }
 
 function updateTTSMode(mode) {
@@ -159,71 +116,183 @@ function updateTTSMode(mode) {
     voiceCloneSection.classList.toggle('hidden', !isClone);
 }
 
-async function handleAudioFileSelect(e) {
-    const file = e.target.files[0];
-    if (!file) return;
+// ============== Multi-audio management ==============
+
+/**
+ * Called when the user selects one or more files via the file picker.
+ * Uploads each file to the server, gets back a path, and adds it to the list.
+ */
+async function handleAudioFilesSelected(e) {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
 
     const p = state.personasData[state.currentPersonaId];
-    if (!p || !p.ttsVoiceClone) return;
+    if (!p?.ttsVoiceClone) return;
 
-    // 验证文件类型
-    const validTypes = ['audio/wav', 'audio/mp3', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/x-wav'];
-    if (!validTypes.includes(file.type) && !file.name.match(/\.(wav|mp3|ogg|flac)$/i)) {
-        vcAudioStatus.textContent = '⚠ Unsupported format. Use WAV, MP3, OGG, or FLAC.';
-        vcAudioStatus.style.color = '#f14c4c';
-        return;
-    }
+    for (const file of files) {
+        const validTypes = ['audio/wav', 'audio/mp3', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/x-wav'];
+        if (!validTypes.includes(file.type) && !file.name.match(/\.(wav|mp3|ogg|flac)$/i)) {
+            alert(`Unsupported format: ${file.name}. Use WAV, MP3, OGG, or FLAC.`);
+            continue;
+        }
+        if (file.size > 50 * 1024 * 1024) {
+            alert(`File too large: ${file.name}. Max 50 MB.`);
+            continue;
+        }
 
-    // 验证文件大小 (最大 50MB)
-    if (file.size > 50 * 1024 * 1024) {
-        vcAudioStatus.textContent = '⚠ File too large. Max 50MB.';
-        vcAudioStatus.style.color = '#f14c4c';
-        return;
-    }
+        // Show a temporary uploading entry
+        const tempId = 'uploading_' + Date.now();
+        p.ttsVoiceClone.refAudios.push({
+            id: tempId, filename: file.name, path: '', refText: '', selected: false,
+            exists: false, _uploading: true,
+        });
+        renderRefAudioList(p);
 
-    // 读取文件为 base64
-    try {
-        const base64Data = await fileToBase64(file);
-        p.ttsVoiceClone.refAudioPath = file.name;
-        p.ttsVoiceClone.refAudioData = base64Data;
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const result = await api.uploadRefAudio(formData);
 
-        // 更新 UI
-        vcAudioStatus.textContent = `✓ ${file.name}`;
-        vcAudioStatus.style.color = '#4ec9b0';
-        vcAudioPreview.src = URL.createObjectURL(file);
-        vcAudioPreview.classList.remove('hidden');
-        vcAudioClearBtn.classList.remove('hidden');
+            // Replace temp entry with the real one
+            const entryIdx = p.ttsVoiceClone.refAudios.findIndex(a => a.id === tempId);
+            if (entryIdx !== -1) {
+                // Auto-select if this is the first audio
+                const isFirst = p.ttsVoiceClone.refAudios.filter(a => !a._uploading).length === 0
+                    && p.ttsVoiceClone.refAudios.filter(a => a.selected).length === 0;
+                p.ttsVoiceClone.refAudios[entryIdx] = {
+                    id:       result.id,
+                    filename: result.filename,
+                    path:     result.path,
+                    refText:  '',
+                    selected: isFirst,
+                    exists:   true,
+                };
+            }
+        } catch (err) {
+            console.error('Upload failed:', err);
+            // Remove the failed temp entry
+            p.ttsVoiceClone.refAudios = p.ttsVoiceClone.refAudios.filter(a => a.id !== tempId);
+            alert(`Failed to upload ${file.name}: ${err.message}`);
+        }
 
+        renderRefAudioList(p);
         markUnsaved();
-    } catch (err) {
-        console.error('Failed to read audio file:', err);
-        vcAudioStatus.textContent = '⚠ Failed to read file.';
-        vcAudioStatus.style.color = '#f14c4c';
     }
+
+    // Reset file input so the same file can be re-selected if needed
+    vcAudioFileInput.value = '';
 }
 
-function clearRefAudio() {
-    const p = state.personasData[state.currentPersonaId];
-    if (p && p.ttsVoiceClone) {
-        p.ttsVoiceClone.refAudioPath = '';
-        p.ttsVoiceClone.refAudioData = null;
+/**
+ * Render the full reference audio list into #vc-audio-list.
+ */
+function renderRefAudioList(persona) {
+    if (!vcAudioList) return;
+    vcAudioList.innerHTML = '';
+
+    const audios = persona.ttsVoiceClone?.refAudios || [];
+    if (audios.length === 0) {
+        vcAudioList.innerHTML = '<p class="param-hint" style="margin-top:8px;">No reference audios added yet.</p>';
+        return;
     }
-    vcAudioFileInput.value = '';
-    vcAudioStatus.textContent = 'No audio uploaded';
-    vcAudioStatus.style.color = '#969696';
-    vcAudioPreview.classList.add('hidden');
-    vcAudioPreview.src = '';
-    vcAudioClearBtn.classList.add('hidden');
+
+    audios.forEach((audio, idx) => {
+        const entry = document.createElement('div');
+        entry.className = 'vc-audio-entry' + (audio.selected ? ' vc-audio-entry--selected' : '');
+        entry.dataset.id = audio.id;
+
+        if (audio._uploading) {
+            entry.innerHTML = `<div class="vc-audio-entry-header">
+                <span class="vc-audio-filename">⏳ Uploading ${_escHtml(audio.filename)}…</span>
+            </div>`;
+            vcAudioList.appendChild(entry);
+            return;
+        }
+
+        const missingBadge = !audio.exists
+            ? `<span class="vc-audio-missing-badge" title="File not found on server — please re-upload">⚠ File missing</span>`
+            : '';
+
+        const audioUrl = audio.path ? `${API_BASE}/api/tts/ref-audio/${_filenameFromPath(audio.path)}` : '';
+
+        entry.innerHTML = `
+            <div class="vc-audio-entry-header">
+                <label class="vc-audio-select-label" title="Use this audio for TTS inference">
+                    <input type="radio" name="vc-ref-select-${persona.id}"
+                           class="vc-ref-radio" value="${audio.id}"
+                           ${audio.selected ? 'checked' : ''}>
+                    <span class="vc-audio-filename">${_escHtml(audio.filename)}</span>
+                </label>
+                ${missingBadge}
+                <button class="icon-btn vc-audio-delete-btn" data-id="${audio.id}" title="Remove this audio">✕</button>
+            </div>
+            ${audioUrl ? `<audio src="${audioUrl}" controls class="vc-audio-preview"></audio>` : ''}
+            <textarea class="form-input vc-audio-ref-text" data-id="${audio.id}" rows="2"
+                placeholder="Transcript of this audio clip (improves quality)…">${_escHtml(audio.refText)}</textarea>
+        `;
+
+        vcAudioList.appendChild(entry);
+    });
+
+    // Bind events for this render
+    vcAudioList.querySelectorAll('.vc-ref-radio').forEach(radio => {
+        radio.addEventListener('change', () => {
+            const p = state.personasData[state.currentPersonaId];
+            if (!p?.ttsVoiceClone) return;
+            p.ttsVoiceClone.refAudios.forEach(a => { a.selected = (a.id === radio.value); });
+            renderRefAudioList(p);
+            markUnsaved();
+        });
+    });
+
+    vcAudioList.querySelectorAll('.vc-audio-ref-text').forEach(ta => {
+        ta.addEventListener('input', () => {
+            const p = state.personasData[state.currentPersonaId];
+            if (!p?.ttsVoiceClone) return;
+            const a = p.ttsVoiceClone.refAudios.find(x => x.id === ta.dataset.id);
+            if (a) { a.refText = ta.value; markUnsaved(); }
+        });
+    });
+
+    vcAudioList.querySelectorAll('.vc-audio-delete-btn').forEach(btn => {
+        btn.addEventListener('click', () => handleDeleteAudio(btn.dataset.id));
+    });
+}
+
+async function handleDeleteAudio(audioId) {
+    const p = state.personasData[state.currentPersonaId];
+    if (!p?.ttsVoiceClone) return;
+
+    const audio = p.ttsVoiceClone.refAudios.find(a => a.id === audioId);
+    if (!audio) return;
+
+    // Delete the file from the server
+    if (audio.path) {
+        try {
+            await api.deleteRefAudio(_filenameFromPath(audio.path));
+        } catch (err) {
+            console.warn('Server-side delete failed:', err);
+        }
+    }
+
+    p.ttsVoiceClone.refAudios = p.ttsVoiceClone.refAudios.filter(a => a.id !== audioId);
+
+    // If the deleted audio was selected, auto-select the first remaining one
+    const hasSelected = p.ttsVoiceClone.refAudios.some(a => a.selected);
+    if (!hasSelected && p.ttsVoiceClone.refAudios.length > 0) {
+        p.ttsVoiceClone.refAudios[0].selected = true;
+    }
+
+    renderRefAudioList(p);
     markUnsaved();
 }
 
-function fileToBase64(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(',')[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-    });
+function _filenameFromPath(path) {
+    return path.split('/').pop();
+}
+
+function _escHtml(str) {
+    return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function markUnsaved() {
@@ -243,45 +312,40 @@ async function loadPersonasFromDB() {
             const defaultId = "default_1";
             const defaultData = createDefaultPersonaData(defaultId, 'Default Assistant', 'You are a helpful AI.', ['Always be polite.']);
             state.personasData[defaultId] = { ...defaultData };
-            savedPersonasData[defaultId] = { ...defaultData };
+            savedPersonasData[defaultId]  = { ...defaultData };
         } else {
             personas.forEach(p => {
-                // 确保老数据也有 TTS 字段
                 ensureTTSFields(p);
                 state.personasData[p.id] = structuredClone(p);
-                savedPersonasData[p.id] = structuredClone(p);
+                savedPersonasData[p.id]  = structuredClone(p);
             });
         }
         renderPersonaList();
-        const firstId = Object.keys(state.personasData)[0];
-        switchPersona(firstId);
+        switchPersona(Object.keys(state.personasData)[0]);
     } catch (err) {
         console.error("Failed to load personas:", err);
     }
 }
 
-/**
- * 确保 persona 对象拥有 TTS 相关字段，兼容旧数据
- */
 function ensureTTSFields(persona) {
     if (!persona.ttsMode) persona.ttsMode = 'voice_design';
     if (!persona.ttsVoiceDesign) {
         persona.ttsVoiceDesign = { instruct: '', language: 'auto' };
     }
     if (!persona.ttsVoiceClone) {
-        persona.ttsVoiceClone = { refAudioPath: '', refAudioData: null, refText: '', language: 'auto' };
+        persona.ttsVoiceClone = { refAudios: [], language: 'auto' };
+    }
+    if (!Array.isArray(persona.ttsVoiceClone.refAudios)) {
+        persona.ttsVoiceClone.refAudios = [];
     }
 }
 
 function createDefaultPersonaData(id, name, description, rules) {
     return {
-        id,
-        name,
-        description,
-        rules,
+        id, name, description, rules,
         ttsMode: 'voice_design',
         ttsVoiceDesign: { instruct: '', language: 'auto' },
-        ttsVoiceClone: { refAudioPath: '', refAudioData: null, refText: '', language: 'auto' }
+        ttsVoiceClone:  { refAudios: [], language: 'auto' },
     };
 }
 
@@ -297,7 +361,6 @@ function updateDraft(field, value) {
 async function handleSave() {
     const currentDraft = state.personasData[state.currentPersonaId];
     if (!currentDraft) return;
-
     try {
         const response = await api.savePersona(currentDraft);
         if (response.id !== currentDraft.id) {
@@ -341,22 +404,17 @@ async function handleDelete() {
         clearTimeout(deleteConfirmTimeout);
 
         try {
-            const isDatabaseId = String(id).match(/^\d+$/);
-            if (savedPersonasData[id] && isDatabaseId) {
+            if (savedPersonasData[id] && String(id).match(/^\d+$/)) {
                 await api.deletePersona(id);
             }
         } catch (err) {
-            console.warn("Backend deletion failed or skipped, proceeding with local cleanup.", err);
+            console.warn("Backend deletion failed or skipped.", err);
         }
 
         delete state.personasData[id];
         delete savedPersonasData[id];
-        const remainingIds = Object.keys(state.personasData);
-        if (remainingIds.length > 0) {
-            switchPersona(remainingIds[0]);
-        } else {
-            createNewPersona();
-        }
+        const remaining = Object.keys(state.personasData);
+        if (remaining.length > 0) { switchPersona(remaining[0]); } else { createNewPersona(); }
         renderPersonaList();
     } else {
         deleteBtn.dataset.confirming = "true";
@@ -375,11 +433,11 @@ async function handleDelete() {
 // ============== 渲染与 UI ==============
 
 function switchView(viewName) {
-    chatView.classList.toggle('hidden', viewName !== 'chat');
+    chatView.classList.toggle('hidden',    viewName !== 'chat');
     personaView.classList.toggle('hidden', viewName !== 'persona');
-    settingsView.classList.toggle('hidden', viewName !== 'settings');
-    navChatBtn.classList.toggle('active', viewName === 'chat');
-    navPersonaBtn.classList.toggle('active', viewName === 'persona');
+    settingsView.classList.toggle('hidden',viewName !== 'settings');
+    navChatBtn.classList.toggle('active',     viewName === 'chat');
+    navPersonaBtn.classList.toggle('active',  viewName === 'persona');
     navSettingsBtn.classList.toggle('active', viewName === 'settings');
 }
 
@@ -398,8 +456,6 @@ function switchPersona(id) {
     if (!state.personasData[id]) return;
     state.currentPersonaId = id;
     const persona = state.personasData[id];
-
-    // 确保 TTS 字段存在
     ensureTTSFields(persona);
 
     personaNameInput.value = persona.name;
@@ -427,48 +483,22 @@ function renderRules(persona) {
         div.className = 'rule-item';
         div.style.cssText = "display: flex; gap: 10px; margin-bottom: 8px;";
         div.innerHTML = `
-            <input type="text" value="${rule}" data-index="${index}" class="rule-input form-input" style="flex-grow: 1;">
+            <input type="text" value="${_escHtml(rule)}" data-index="${index}"
+                   class="rule-input form-input" style="flex-grow: 1;">
             <button data-index="${index}" class="delete-rule-btn icon-btn" style="color: #ff6b6b;">🗑️</button>
         `;
         rulesContainer.appendChild(div);
     });
 }
 
-/**
- * 渲染 TTS 表单字段，根据当前 persona 的 TTS 设置填充
- */
 function renderTTSFields(persona) {
-    // 设置模式开关
     updateTTSMode(persona.ttsMode || 'voice_design');
 
-    // VoiceDesign 字段
-    vdInstructInput.value = persona.ttsVoiceDesign?.instruct || '';
-    vdLanguageSelect.value = persona.ttsVoiceDesign?.language || 'auto';
+    vdInstructInput.value  = persona.ttsVoiceDesign?.instruct  || '';
+    vdLanguageSelect.value = persona.ttsVoiceDesign?.language  || 'auto';
+    vcLanguageSelect.value = persona.ttsVoiceClone?.language   || 'auto';
 
-    // Voice Clone 字段
-    vcRefTextInput.value = persona.ttsVoiceClone?.refText || '';
-    vcLanguageSelect.value = persona.ttsVoiceClone?.language || 'auto';
-
-    // 音频状态
-    if (persona.ttsVoiceClone?.refAudioPath) {
-        vcAudioStatus.textContent = `✓ ${persona.ttsVoiceClone.refAudioPath}`;
-        vcAudioStatus.style.color = '#4ec9b0';
-        vcAudioClearBtn.classList.remove('hidden');
-        // 如果有 base64 数据，设置预览
-        if (persona.ttsVoiceClone.refAudioData) {
-            vcAudioPreview.src = `data:audio/wav;base64,${persona.ttsVoiceClone.refAudioData}`;
-            vcAudioPreview.classList.remove('hidden');
-        } else {
-            vcAudioPreview.classList.add('hidden');
-        }
-    } else {
-        vcAudioStatus.textContent = 'No audio uploaded';
-        vcAudioStatus.style.color = '#969696';
-        vcAudioPreview.classList.add('hidden');
-        vcAudioPreview.src = '';
-        vcAudioClearBtn.classList.add('hidden');
-    }
-    vcAudioFileInput.value = '';
+    renderRefAudioList(persona);
 }
 
 function syncToSystemPrompt(persona) {

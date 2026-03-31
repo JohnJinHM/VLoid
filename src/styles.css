@@ -702,37 +702,91 @@ input:checked+.slider:before {
     padding: 6px 14px;
 }
 
-.vc-audio-status {
-    font-size: 0.8rem;
-    color: var(--text-secondary);
+/* Multi-audio list */
+.vc-audio-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.vc-audio-entry {
+    background: var(--bg-element);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: border-color 0.15s;
+}
+
+.vc-audio-entry--selected {
+    border-color: var(--tts-active-color);
+    background: rgba(78, 201, 176, 0.06);
+}
+
+.vc-audio-entry-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.vc-audio-select-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
     flex-grow: 1;
+    min-width: 0;
+}
+
+.vc-audio-filename {
+    font-size: 0.85rem;
+    color: var(--text-primary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.vc-clear-btn {
-    color: var(--danger-color);
-    font-size: 1rem;
-    padding: 2px 6px;
+.vc-audio-missing-badge {
+    font-size: 0.75rem;
+    color: #f0a500;
+    background: rgba(240, 165, 0, 0.12);
+    border: 1px solid rgba(240, 165, 0, 0.3);
+    border-radius: 4px;
+    padding: 1px 6px;
+    white-space: nowrap;
     flex-shrink: 0;
 }
 
-.vc-clear-btn:hover {
-    color: #ff8888;
+.vc-audio-delete-btn {
+    color: var(--danger-color);
+    font-size: 0.85rem;
+    padding: 2px 6px;
+    flex-shrink: 0;
+    margin-left: auto;
 }
+
+.vc-audio-delete-btn:hover { color: #ff8888; }
 
 .vc-audio-preview {
     width: 100%;
     height: 36px;
-    margin-top: 6px;
     border-radius: var(--radius-sm);
     outline: none;
 }
 
 /* 自定义 audio 控件在暗色主题下的基础样式 */
 .vc-audio-preview::-webkit-media-controls-panel {
-    background: var(--bg-element);
+    background: var(--bg-surface);
+}
+
+.vc-audio-ref-text {
+    font-size: 0.82rem;
+    resize: vertical;
+    min-height: 48px;
 }
 
 /* ==================== Settings View ==================== */

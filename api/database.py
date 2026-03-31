@@ -50,8 +50,12 @@ class PersonaDB(Base):
     tts_mode = Column(String, default="voice_design")   # "voice_design" | "voice_clone"
     tts_instruct = Column(Text, default="")             # VoiceDesign: style instruction
     tts_language = Column(String, default="Auto")       # language hint
-    tts_ref_audio = Column(Text, default="")            # VoiceClone: base64 audio
-    tts_ref_text = Column(Text, default="")             # VoiceClone: reference transcript
+    # VoiceClone: JSON array of ref audio objects
+    # Each entry: {id, filename, path, ref_text, selected}
+    tts_ref_audios = Column(Text, default="[]")
+    # Deprecated single-audio columns kept for schema compat; no longer written
+    tts_ref_audio = Column(Text, default="")
+    tts_ref_text = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.now(timezone.utc))
 
 
@@ -61,11 +65,12 @@ Base.metadata.create_all(bind=engine)
 def _migrate_personas_tts(engine):
     """Add TTS columns to existing personas table if they are missing."""
     new_columns = {
-        "tts_mode":     "VARCHAR DEFAULT 'voice_design'",
-        "tts_instruct": "TEXT DEFAULT ''",
-        "tts_language": "VARCHAR DEFAULT 'Auto'",
-        "tts_ref_audio":"TEXT DEFAULT ''",
-        "tts_ref_text": "TEXT DEFAULT ''",
+        "tts_mode":      "VARCHAR DEFAULT 'voice_design'",
+        "tts_instruct":  "TEXT DEFAULT ''",
+        "tts_language":  "VARCHAR DEFAULT 'Auto'",
+        "tts_ref_audio": "TEXT DEFAULT ''",
+        "tts_ref_text":  "TEXT DEFAULT ''",
+        "tts_ref_audios":"TEXT DEFAULT '[]'",
     }
     with engine.connect() as conn:
         existing = {row[1] for row in conn.execute(text("PRAGMA table_info(personas)"))}

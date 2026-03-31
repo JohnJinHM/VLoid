@@ -1,11 +1,15 @@
+import json
+import os
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
+
 from api.database import get_db, PersonaDB
 from pydantic import BaseModel
-import json
 
 router = APIRouter(prefix="/api/personas", tags=["Personas"])
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 
 
 # ------------------------------------------------------------------
@@ -17,18 +21,25 @@ class TTSVoiceDesign(BaseModel):
     language: str = "Auto"
 
 
-class TTSVoiceClone(BaseModel):
-    ref_audio: str = ""     # base64-encoded audio
+class RefAudioEntry(BaseModel):
+    id: str
+    filename: str
+    path: str          # Relative path from project root: data/ref_audio/<uuid>.<ext>
     ref_text: str = ""
+    selected: bool = False
+
+
+class TTSVoiceClone(BaseModel):
+    ref_audios: List[RefAudioEntry] = []
     language: str = "Auto"
 
 
 class PersonaSchema(BaseModel):
-    id: str                     # frontend temp-id or DB integer as string
+    id: str
     name: str
     description: str
     rules: List[str]
-    tts_mode: Optional[str] = "voice_design"            # "voice_design" | "voice_clone"
+    tts_mode: Optional[str] = "voice_design"
     tts_voice_design: Optional[TTSVoiceDesign] = None
     tts_voice_clone: Optional[TTSVoiceClone] = None
 
@@ -37,7 +48,22 @@ class PersonaSchema(BaseModel):
 # Helpers
 # ------------------------------------------------------------------
 
+def _check_audio_exists(path: str) -> bool:
+    return os.path.isfile(os.path.join(_PROJECT_ROOT, path))
+
+
 def _row_to_dict(p: PersonaDB) -> dict:
+    # Parse the ref_audios JSON list; annotate each entry with exists flag
+    try:
+        ref_audios_raw = json.loads(p.tts_ref_audios or "[]")
+    except (json.JSONDecodeError, TypeError):
+        ref_audios_raw = []
+
+    ref_audios = []
+    for entry in ref_audios_raw:
+        entry["exists"] = _check_audio_exists(entry.get("path", ""))
+        ref_audios.append(entry)
+
     return {
         "id": str(p.id),
         "name": p.name,
@@ -49,8 +75,7 @@ def _row_to_dict(p: PersonaDB) -> dict:
             "language": p.tts_language or "Auto",
         },
         "tts_voice_clone": {
-            "ref_audio": p.tts_ref_audio or "",
-            "ref_text": p.tts_ref_text or "",
+            "ref_audios": ref_audios,
             "language": p.tts_language or "Auto",
         },
     }
@@ -71,35 +96,41 @@ def save_persona(persona: PersonaSchema, db: Session = Depends(get_db)):
     if persona.id.isdigit():
         db_persona = db.query(PersonaDB).filter(PersonaDB.id == int(persona.id)).first()
 
-    # Flatten TTS sub-objects
     tts_mode = persona.tts_mode or "voice_design"
+
     if tts_mode == "voice_design" and persona.tts_voice_design:
         tts_instruct = persona.tts_voice_design.instruct
         tts_language = persona.tts_voice_design.language
-        tts_ref_audio = ""
-        tts_ref_text = ""
+        tts_ref_audios = "[]"
     elif tts_mode == "voice_clone" and persona.tts_voice_clone:
         tts_instruct = ""
         tts_language = persona.tts_voice_clone.language
-        tts_ref_audio = persona.tts_voice_clone.ref_audio
-        tts_ref_text = persona.tts_voice_clone.ref_text
+        # Serialise list; strip runtime-only 'exists' field before storing
+        entries = []
+        for e in persona.tts_voice_clone.ref_audios:
+            entries.append({
+                "id":       e.id,
+                "filename": e.filename,
+                "path":     e.path,
+                "ref_text": e.ref_text,
+                "selected": e.selected,
+            })
+        tts_ref_audios = json.dumps(entries)
     else:
-        tts_instruct = ""
-        tts_language = "Auto"
-        tts_ref_audio = ""
-        tts_ref_text = ""
+        tts_instruct   = ""
+        tts_language   = "Auto"
+        tts_ref_audios = "[]"
 
     rules_json = json.dumps(persona.rules)
 
     if db_persona:
-        db_persona.name = persona.name
-        db_persona.description = persona.description
-        db_persona.rules = rules_json
-        db_persona.tts_mode = tts_mode
-        db_persona.tts_instruct = tts_instruct
-        db_persona.tts_language = tts_language
-        db_persona.tts_ref_audio = tts_ref_audio
-        db_persona.tts_ref_text = tts_ref_text
+        db_persona.name          = persona.name
+        db_persona.description   = persona.description
+        db_persona.rules         = rules_json
+        db_persona.tts_mode      = tts_mode
+        db_persona.tts_instruct  = tts_instruct
+        db_persona.tts_language  = tts_language
+        db_persona.tts_ref_audios = tts_ref_audios
     else:
         db_persona = PersonaDB(
             name=persona.name,
@@ -108,8 +139,7 @@ def save_persona(persona: PersonaSchema, db: Session = Depends(get_db)):
             tts_mode=tts_mode,
             tts_instruct=tts_instruct,
             tts_language=tts_language,
-            tts_ref_audio=tts_ref_audio,
-            tts_ref_text=tts_ref_text,
+            tts_ref_audios=tts_ref_audios,
         )
         db.add(db_persona)
 
