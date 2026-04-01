@@ -108,11 +108,12 @@ class TTSService:
             
             if self.model_type == "voice_clone":
                 self._enable_streaming_opts(self.model)
-                
-                # Warmup
-                logger.info("Starting JIT Compilation & CUDA Graph capture (This will take a few minutes!)...")
-                self._warmup_model()
-                logger.info("Warmup complete.")           
+
+            # Warmup runs for both model types: pre-compiles Triton kernels /
+            # captures CUDA graphs so the first real request is not slow.
+            logger.info("Starting JIT compilation & CUDA graph capture (this may take a few minutes)...")
+            self._warmup_model()
+            logger.info("Warmup complete.")           
         except Exception as e:
             logger.error(f"Failed to load {self.model_type} model: {e}", exc_info=True)
 
@@ -131,26 +132,44 @@ class TTSService:
             elif self.model_type == "voice_clone":
                 sample_rate = 16000
                 silent_audio = np.zeros(sample_rate, dtype=np.float32)
-                
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
-                    tmp_path = tmp_file.name
-                
+
+                tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+                os.close(tmp_fd)
                 try:
                     sf.write(tmp_path, silent_audio, sample_rate, format="WAV", subtype="PCM_16")
-                    
-                    prompt = self.model.create_voice_clone_prompt(
+
+                    stream_kwargs = dict(
+                        text="Warmup test.",
+                        language="Auto",
+                        emit_every_frames=self._vc_emit_every_frames,
+                        decode_window_frames=self._vc_decode_window_frames,
+                        overlap_samples=self._vc_overlap_samples,
+                    )
+
+                    # Pass 1 — x-vector-only mode (no ref_text).
+                    # This is the code path taken when the user hasn't supplied a
+                    # transcript for their reference audio.  The voice_clone_prompt
+                    # tensor has a different shape here than in ICL mode, so it
+                    # needs its own CUDA graph capture.
+                    logger.info("Warmup pass 1/2: x-vector-only mode...")
+                    prompt_xvec = self.model.create_voice_clone_prompt(
+                        ref_audio=tmp_path,
+                        x_vector_only_mode=True,
+                    )
+                    list(self.model.stream_generate_voice_clone(
+                        voice_clone_prompt=prompt_xvec, **stream_kwargs
+                    ))
+
+                    # Pass 2 — ICL mode (with ref_text).
+                    # Different prompt shape → separate CUDA graph needed.
+                    logger.info("Warmup pass 2/2: ICL mode (with ref_text)...")
+                    prompt_icl = self.model.create_voice_clone_prompt(
                         ref_audio=tmp_path,
                         ref_text="warmup",
                         x_vector_only_mode=False,
                     )
-                    
                     list(self.model.stream_generate_voice_clone(
-                        text="Warmup test.",
-                        language="Auto",
-                        voice_clone_prompt=prompt,
-                        emit_every_frames=self._vc_emit_every_frames,
-                        decode_window_frames=self._vc_decode_window_frames,
-                        overlap_samples=self._vc_overlap_samples,
+                        voice_clone_prompt=prompt_icl, **stream_kwargs
                     ))
                 finally:
                     if os.path.exists(tmp_path):
@@ -265,13 +284,15 @@ class TTSService:
 
     def _enable_streaming_opts(self, model):
         opts = {
-            "decode_window_frames": 80,
-            "use_compile": True,                 # 核心开关：开启编译
-            "use_cuda_graphs": False,            # reduce-overhead 内部已包含，无需显式开启
-            "compile_mode": "reduce-overhead",   # 启用CUDA Graphs
-            "use_fast_codebook": True,           # 启用快速 Codebook
-            "compile_codebook_predictor": True,  # 编译 Codebook 预测器
-            "compile_talker": True               # 编译主干网络
+            # Must match the value passed to stream_generate_voice_clone so the
+            # CUDA graph captured here is valid for every real inference call.
+            "decode_window_frames": self._vc_decode_window_frames,
+            "use_compile": True,
+            "use_cuda_graphs": False,            # reduce-overhead includes this internally
+            "compile_mode": "reduce-overhead",
+            "use_fast_codebook": True,
+            "compile_codebook_predictor": True,
+            "compile_talker": True,
         }
         try:
             model.enable_streaming_optimizations(**opts)
