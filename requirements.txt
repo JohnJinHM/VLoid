@@ -80,3 +80,6 @@ isal>=1.5.0
 lz4>=4.3.3
 ml_dtypes>=0.4.0
 zstandard>=0.22.0
+
+transformers==4.57.3
+#flash-attn==2.8.3+cu130torch2.11

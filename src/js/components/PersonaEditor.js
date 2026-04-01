@@ -29,15 +29,17 @@ const resetBtn  = document.getElementById('reset-persona-btn');
 const deleteBtn = document.getElementById('delete-persona-btn');
 
 // TTS DOM 元素
-const ttsModeToggle      = document.getElementById('tts-mode-toggle');
-const voiceDesignSection = document.getElementById('voice-design-section');
-const voiceCloneSection  = document.getElementById('voice-clone-section');
-const vdInstructInput    = document.getElementById('vd-instruct');
-const vdLanguageSelect   = document.getElementById('vd-language');
-const vcLanguageSelect   = document.getElementById('vc-language');
-const vcAudioUploadBtn   = document.getElementById('vc-audio-upload-btn');
-const vcAudioFileInput   = document.getElementById('vc-audio-file');
-const vcAudioList        = document.getElementById('vc-audio-list');
+const voiceDesignSection  = document.getElementById('voice-design-section');
+const voiceCloneSection   = document.getElementById('voice-clone-section');
+const vdInstructInput     = document.getElementById('vd-instruct');
+const vdLanguageSelect    = document.getElementById('vd-language');
+const vdSplitModeSelect   = document.getElementById('vd-split-mode');
+const vcLanguageSelect    = document.getElementById('vc-language');
+const vcSplitCharsSlider  = document.getElementById('vc-split-chars');
+const vcSplitCharsVal     = document.getElementById('vc-split-chars-val');
+const vcAudioUploadBtn    = document.getElementById('vc-audio-upload-btn');
+const vcAudioFileInput    = document.getElementById('vc-audio-file');
+const vcAudioList         = document.getElementById('vc-audio-list');
 
 let savedPersonasData = {};
 
@@ -85,12 +87,6 @@ export async function initPersonaManager() {
 // ============== TTS 事件 ==============
 
 function initTTSEvents() {
-    ttsModeToggle.addEventListener('change', (e) => {
-        const mode = e.target.checked ? 'voice_clone' : 'voice_design';
-        updateTTSMode(mode);
-        updateDraft('ttsMode', mode);
-    });
-
     vdInstructInput.addEventListener('input', (e) => {
         const p = state.personasData[state.currentPersonaId];
         if (p?.ttsVoiceDesign) { p.ttsVoiceDesign.instruct = e.target.value; markUnsaved(); }
@@ -101,18 +97,29 @@ function initTTSEvents() {
         if (p?.ttsVoiceDesign) { p.ttsVoiceDesign.language = e.target.value; markUnsaved(); }
     });
 
+    vdSplitModeSelect.addEventListener('change', (e) => {
+        const p = state.personasData[state.currentPersonaId];
+        if (p?.ttsVoiceDesign) { p.ttsVoiceDesign.splitMode = e.target.value; markUnsaved(); }
+    });
+
     vcLanguageSelect.addEventListener('change', (e) => {
         const p = state.personasData[state.currentPersonaId];
         if (p?.ttsVoiceClone) { p.ttsVoiceClone.language = e.target.value; markUnsaved(); }
+    });
+
+    vcSplitCharsSlider.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value, 10) || 0;
+        vcSplitCharsVal.textContent = val;
+        const p = state.personasData[state.currentPersonaId];
+        if (p?.ttsVoiceClone) { p.ttsVoiceClone.splitChars = val; markUnsaved(); }
     });
 
     vcAudioUploadBtn.addEventListener('click', () => vcAudioFileInput.click());
     vcAudioFileInput.addEventListener('change', handleAudioFilesSelected);
 }
 
-function updateTTSMode(mode) {
-    const isClone = mode === 'voice_clone';
-    ttsModeToggle.checked = isClone;
+function updateTTSMode() {
+    const isClone = state.ttsServerModelType === 'voice_clone';
     voiceDesignSection.classList.toggle('hidden', isClone);
     voiceCloneSection.classList.toggle('hidden', !isClone);
 }
@@ -306,14 +313,16 @@ async function loadPersonasFromDB() {
 function ensureTTSFields(persona) {
     if (!persona.ttsMode) persona.ttsMode = 'voice_design';
     if (!persona.ttsVoiceDesign) {
-        persona.ttsVoiceDesign = { instruct: '', language: 'auto' };
+        persona.ttsVoiceDesign = { instruct: '', language: 'auto', splitMode: 'sentence' };
     }
+    if (persona.ttsVoiceDesign.splitMode === undefined) persona.ttsVoiceDesign.splitMode = 'sentence';
     if (!persona.ttsVoiceClone) {
-        persona.ttsVoiceClone = { refAudios: [], language: 'auto' };
+        persona.ttsVoiceClone = { refAudios: [], language: 'auto', splitChars: 0 };
     }
     if (!Array.isArray(persona.ttsVoiceClone.refAudios)) {
         persona.ttsVoiceClone.refAudios = [];
     }
+    if (persona.ttsVoiceClone.splitChars === undefined) persona.ttsVoiceClone.splitChars = 0;
 }
 
 function createDefaultPersonaData(id, name, description, rules) {
@@ -468,11 +477,16 @@ function renderRules(persona) {
 }
 
 function renderTTSFields(persona) {
-    updateTTSMode(persona.ttsMode || 'voice_design');
+    updateTTSMode();
 
-    vdInstructInput.value  = persona.ttsVoiceDesign?.instruct  || '';
-    vdLanguageSelect.value = persona.ttsVoiceDesign?.language  || 'auto';
-    vcLanguageSelect.value = persona.ttsVoiceClone?.language   || 'auto';
+    vdInstructInput.value    = persona.ttsVoiceDesign?.instruct   || '';
+    vdLanguageSelect.value   = persona.ttsVoiceDesign?.language   || 'auto';
+    vdSplitModeSelect.value  = persona.ttsVoiceDesign?.splitMode  || 'sentence';
+
+    vcLanguageSelect.value   = persona.ttsVoiceClone?.language    || 'auto';
+    const sc = persona.ttsVoiceClone?.splitChars ?? 0;
+    vcSplitCharsSlider.value = sc;
+    vcSplitCharsVal.textContent = sc;
 
     renderRefAudioList(persona);
 }

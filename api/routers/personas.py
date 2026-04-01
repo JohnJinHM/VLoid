@@ -17,12 +17,13 @@ router = APIRouter(prefix="/api/personas", tags=["Personas"])
 class TTSVoiceDesign(BaseModel):
     instruct: str = ""
     language: str = "Auto"
+    split_mode: str = "sentence"   # sentence | punctuation | paragraph | whole
 
 
 class RefAudioEntry(BaseModel):
     id: str
     filename: str
-    path: str          # Relative path from project root: data/ref_audio/<uuid>.<ext>
+    path: str          # Absolute OS path stored by the Electron client
     ref_text: str = ""
     selected: bool = False
 
@@ -30,6 +31,7 @@ class RefAudioEntry(BaseModel):
 class TTSVoiceClone(BaseModel):
     ref_audios: List[RefAudioEntry] = []
     language: str = "Auto"
+    split_chars: int = 0           # min chars before a sentence boundary triggers a new chunk
 
 
 class PersonaSchema(BaseModel):
@@ -73,12 +75,14 @@ def _row_to_dict(p: PersonaDB) -> dict:
         "rules": json.loads(p.rules) if p.rules else [],
         "tts_mode": p.tts_mode or "voice_design",
         "tts_voice_design": {
-            "instruct": p.tts_instruct or "",
-            "language": p.tts_language or "Auto",
+            "instruct":    p.tts_instruct or "",
+            "language":    p.tts_language or "Auto",
+            "split_mode":  p.tts_vd_split_mode or "sentence",
         },
         "tts_voice_clone": {
-            "ref_audios": ref_audios,
-            "language": p.tts_language or "Auto",
+            "ref_audios":  ref_audios,
+            "language":    p.tts_vc_language or "Auto",
+            "split_chars": p.tts_vc_split_chars or 0,
         },
     }
 
@@ -100,49 +104,40 @@ def save_persona(persona: PersonaSchema, db: Session = Depends(get_db)):
 
     tts_mode = persona.tts_mode or "voice_design"
 
-    if tts_mode == "voice_design" and persona.tts_voice_design:
-        tts_instruct = persona.tts_voice_design.instruct
-        tts_language = persona.tts_voice_design.language
-        tts_ref_audios = "[]"
-    elif tts_mode == "voice_clone" and persona.tts_voice_clone:
-        tts_instruct = ""
-        tts_language = persona.tts_voice_clone.language
-        # Serialise list; strip runtime-only 'exists' field before storing
-        entries = []
-        for e in persona.tts_voice_clone.ref_audios:
-            entries.append({
-                "id":       e.id,
-                "filename": e.filename,
-                "path":     e.path,
-                "ref_text": e.ref_text,
-                "selected": e.selected,
-            })
-        tts_ref_audios = json.dumps(entries)
-    else:
-        tts_instruct   = ""
-        tts_language   = "Auto"
-        tts_ref_audios = "[]"
+    vd = persona.tts_voice_design or TTSVoiceDesign()
+    vc = persona.tts_voice_clone  or TTSVoiceClone()
+
+    # Serialise ref_audios; strip runtime-only 'exists' field before storing
+    ref_audio_entries = []
+    for e in vc.ref_audios:
+        ref_audio_entries.append({
+            "id":       e.id,
+            "filename": e.filename,
+            "path":     e.path,
+            "ref_text": e.ref_text,
+            "selected": e.selected,
+        })
 
     rules_json = json.dumps(persona.rules)
 
+    fields = dict(
+        name=persona.name,
+        description=persona.description,
+        rules=rules_json,
+        tts_mode=tts_mode,
+        tts_instruct=vd.instruct,
+        tts_language=vd.language,
+        tts_vd_split_mode=vd.split_mode,
+        tts_vc_language=vc.language,
+        tts_vc_split_chars=vc.split_chars,
+        tts_ref_audios=json.dumps(ref_audio_entries),
+    )
+
     if db_persona:
-        db_persona.name          = persona.name
-        db_persona.description   = persona.description
-        db_persona.rules         = rules_json
-        db_persona.tts_mode      = tts_mode
-        db_persona.tts_instruct  = tts_instruct
-        db_persona.tts_language  = tts_language
-        db_persona.tts_ref_audios = tts_ref_audios
+        for k, v in fields.items():
+            setattr(db_persona, k, v)
     else:
-        db_persona = PersonaDB(
-            name=persona.name,
-            description=persona.description,
-            rules=rules_json,
-            tts_mode=tts_mode,
-            tts_instruct=tts_instruct,
-            tts_language=tts_language,
-            tts_ref_audios=tts_ref_audios,
-        )
+        db_persona = PersonaDB(**fields)
         db.add(db_persona)
 
     db.commit()

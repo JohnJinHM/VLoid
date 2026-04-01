@@ -140,14 +140,6 @@
         <div class="tts-settings-section mt-20">
           <div class="tts-section-header">
             <h3 class="tts-section-title">Voice Settings (Qwen3-TTS)</h3>
-            <div class="tts-mode-switch">
-              <span class="tts-mode-option">Voice Design</span>
-              <label class="switch">
-                <input type="checkbox" id="tts-mode-toggle">
-                <span class="slider round"></span>
-              </label>
-              <span class="tts-mode-option" id="tts-mode-label">Voice Clone</span>
-            </div>
           </div>
 
           <!-- VoiceDesign 模式 -->
@@ -176,6 +168,15 @@
                 <option value="Portuguese">Portuguese (Português)</option>
                 <option value="Spanish">Spanish (Español)</option>
                 <option value="Italian">Italian (Italiano)</option>
+              </select>
+            </div>
+            <div class="param-group">
+              <label>Text Split Mode <span class="param-hint">(how to divide text across inference calls)</span></label>
+              <select id="vd-split-mode" class="form-input form-select">
+                <option value="sentence">By sentence  ( .  !  ?  。 ！ ？ )</option>
+                <option value="punctuation">By punctuation  (incl.  ,  ，  ;  ；  …)</option>
+                <option value="paragraph">By paragraph  (newlines)</option>
+                <option value="whole">Whole message  (single inference call)</option>
               </select>
             </div>
           </div>
@@ -216,6 +217,14 @@
                 <option value="Spanish">Spanish (Español)</option>
                 <option value="Italian">Italian (Italiano)</option>
               </select>
+            </div>
+            <div class="param-group">
+              <div class="param-header">
+                <label>Min chars per segment</label>
+                <span id="vc-split-chars-val" class="param-val">0</span>
+              </div>
+              <input type="range" id="vc-split-chars" min="0" max="300" step="10" value="0">
+              <p class="param-hint">Accumulate at least this many characters before splitting at sentence punctuation. 0 = split immediately.</p>
             </div>
           </div>
         </div>
@@ -279,23 +288,6 @@
           <input type="range" id="tts-volume-slider" min="0" max="1" step="0.05" value="1">
         </div>
 
-        <div class="param-group">
-          <label>Text Split Mode <span class="param-hint">(how TTS divides the response for streaming)</span></label>
-          <select id="tts-split-mode" class="form-input form-select">
-            <option value="sentence">By sentence  ( .  !  ?  。 ！ ？ )</option>
-            <option value="punctuation">By punctuation  (incl.  ,  ，  ;  ；  …)</option>
-            <option value="paragraph">By paragraph  (newlines)</option>
-            <option value="whole">Whole message  (no split)</option>
-          </select>
-        </div>
-
-        <div class="param-group">
-          <label class="toggle-label">
-            <input type="checkbox" id="tts-native-stream-toggle">
-            Native streaming
-            <span class="param-hint">(model emits PCM frames directly — lower first-chunk latency)</span>
-          </label>
-        </div>
       </section>
     </div>
   </div>

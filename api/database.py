@@ -56,6 +56,9 @@ class PersonaDB(Base):
     # Deprecated single-audio columns kept for schema compat; no longer written
     tts_ref_audio = Column(Text, default="")
     tts_ref_text = Column(Text, default="")
+    tts_vd_split_mode = Column(String, default="sentence")  # VoiceDesign: sentence|punctuation|paragraph|whole
+    tts_vc_language = Column(String, default="Auto")        # VoiceClone language (separate from VD)
+    tts_vc_split_chars = Column(Integer, default=0)         # VoiceClone: min chars before sentence split
     created_at = Column(DateTime, default=datetime.now(timezone.utc))
 
 
@@ -70,7 +73,10 @@ def _migrate_personas_tts(engine):
         "tts_language":  "VARCHAR DEFAULT 'Auto'",
         "tts_ref_audio": "TEXT DEFAULT ''",
         "tts_ref_text":  "TEXT DEFAULT ''",
-        "tts_ref_audios":"TEXT DEFAULT '[]'",
+        "tts_ref_audios":    "TEXT DEFAULT '[]'",
+        "tts_vd_split_mode": "VARCHAR DEFAULT 'sentence'",
+        "tts_vc_language":   "VARCHAR DEFAULT 'Auto'",
+        "tts_vc_split_chars":"INTEGER DEFAULT 0",
     }
     with engine.connect() as conn:
         existing = {row[1] for row in conn.execute(text("PRAGMA table_info(personas)"))}

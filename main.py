@@ -10,16 +10,13 @@ from modules.open_webui import WebUIModule
 from modules.llama_cpp import LlamaCppModule
 from modules.api_server import ApiServerModule
 from modules.electron import ElectronModule
+from modules.qwen_tts import QwenTTSModule
 
 
 def _wait_for_ready(host: str, port: int, logger, timeout: int = 600) -> bool:
     """
-    Poll GET /api/tts/status until the server responds with vd_loaded=True,
+    Poll GET /api/tts/status until the server responds with loaded=True,
     or until *timeout* seconds have elapsed.
-
-    Because app.py blocks the lifespan until TTS finishes loading, a single
-    successful response guarantees the model is ready — no need to check the
-    payload content separately.
     """
     url = f"http://{host}:{port}/api/tts/status"
     deadline = time.time() + timeout
@@ -27,10 +24,10 @@ def _wait_for_ready(host: str, port: int, logger, timeout: int = 600) -> bool:
         try:
             with urllib.request.urlopen(url, timeout=3) as resp:
                 data = json.loads(resp.read())
-                if data.get("vd_loaded"):
+                if data.get("loaded"):
                     return True
-        except Exception as exc:
-            continue
+        except Exception:
+            pass
         time.sleep(3)
     logger.warning("Timed out waiting for TTS status endpoint.")
     return False
@@ -57,6 +54,11 @@ def main():
         engine.start()
         active_modules.append(engine)
 
+        # Validate TTS config before starting the API server
+        tts_module = QwenTTSModule(config)
+        tts_module.start()
+        active_modules.append(tts_module)
+
         if config.get("open-webui", {}).get("enabled", False):
             webui = WebUIModule(config)
             webui.start()
@@ -82,7 +84,7 @@ def main():
             logger.info("All systems ready. Type 'exit' to terminate.")
             logger.info("=" * 40)
         else:
-            logger.warning("TTS models did not finish loading within timeout.")
+            logger.warning("TTS model did not finish loading within timeout.")
             logger.info("=" * 40)
             logger.info("System running. Type 'exit' to terminate.")
             logger.info("=" * 40)

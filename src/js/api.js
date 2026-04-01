@@ -32,8 +32,9 @@ export const api = {
             rules: p.rules,
             ttsMode: p.tts_mode || 'voice_design',
             ttsVoiceDesign: {
-                instruct: p.tts_voice_design?.instruct || '',
-                language: p.tts_voice_design?.language || 'auto',
+                instruct:   p.tts_voice_design?.instruct   || '',
+                language:   p.tts_voice_design?.language   || 'auto',
+                splitMode:  p.tts_voice_design?.split_mode || 'sentence',
             },
             ttsVoiceClone: {
                 // Each entry: { id, filename, path, refText, selected, exists }
@@ -43,9 +44,10 @@ export const api = {
                     path:     a.path,
                     refText:  a.ref_text || '',
                     selected: a.selected || false,
-                    exists:   a.exists !== false,   // default true if not reported
+                    exists:   a.exists !== false,
                 })),
-                language: p.tts_voice_clone?.language || 'auto',
+                language:    p.tts_voice_clone?.language    || 'auto',
+                splitChars:  p.tts_voice_clone?.split_chars ?? 0,
             },
         }));
     },
@@ -58,8 +60,9 @@ export const api = {
             rules: personaData.rules,
             tts_mode: personaData.ttsMode || 'voice_design',
             tts_voice_design: {
-                instruct: personaData.ttsVoiceDesign?.instruct || '',
-                language: personaData.ttsVoiceDesign?.language || 'auto',
+                instruct:   personaData.ttsVoiceDesign?.instruct   || '',
+                language:   personaData.ttsVoiceDesign?.language   || 'auto',
+                split_mode: personaData.ttsVoiceDesign?.splitMode  || 'sentence',
             },
             tts_voice_clone: {
                 ref_audios: (personaData.ttsVoiceClone?.refAudios || []).map(a => ({
@@ -69,7 +72,8 @@ export const api = {
                     ref_text: a.refText || '',
                     selected: a.selected || false,
                 })),
-                language: personaData.ttsVoiceClone?.language || 'auto',
+                language:    personaData.ttsVoiceClone?.language    || 'auto',
+                split_chars: personaData.ttsVoiceClone?.splitChars  ?? 0,
             },
         };
         const res = await fetch(`${API_BASE}/api/personas/`, {
@@ -86,52 +90,24 @@ export const api = {
     },
 
     /**
-     * TTS via VoiceDesign mode — returns a streaming fetch Response.
-     * Frame format: [4-byte uint32 BE length][WAV bytes] repeated per sentence.
-     * payload: { text, language, instruct }
-     */
-    async ttsVoiceDesignStream(payload) {
-        return fetch(`${API_BASE}/api/tts/voice-design/stream`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
-    },
-
-    /**
-     * TTS via Voice Clone mode — returns a streaming fetch Response.
-     * Frame format: [4-byte uint32 BE length][WAV bytes] repeated per sentence.
-     * payload: { text, language, ref_audio_path, ref_text }
-     */
-    async ttsVoiceCloneStream(payload) {
-        return fetch(`${API_BASE}/api/tts/voice-clone/stream`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
-    },
-
-    /**
-     * Native-streaming VoiceDesign — model emits raw float32 PCM frames.
+     * Unified TTS streaming endpoint — returns a fetch Response with raw float32 PCM.
      * Wire format: 12-byte header (b'PCM\0' + uint32 BE sr + uint32 BE ch),
      *              then [uint32 BE len][float32 LE PCM bytes] per frame.
+     *
+     * The server dispatches to voice_design or voice_clone based on the loaded model.
+     * payload: { text, language, instruct?, ref_audio_path?, ref_text? }
      */
-    async ttsVoiceDesignStreamNative(payload) {
-        return fetch(`${API_BASE}/api/tts/voice-design/stream-native`, {
+    async ttsStream(payload) {
+        return fetch(`${API_BASE}/api/tts/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
         });
     },
 
-    /**
-     * Native-streaming VoiceClone — same wire format as ttsVoiceDesignStreamNative.
-     */
-    async ttsVoiceCloneStreamNative(payload) {
-        return fetch(`${API_BASE}/api/tts/voice-clone/stream-native`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
+    /** Returns { loaded, model_type, device } from the TTS service. */
+    async getTTSStatus() {
+        const res = await fetch(`${API_BASE}/api/tts/status`);
+        return res.json();
     },
 };

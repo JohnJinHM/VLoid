@@ -23,7 +23,7 @@ class ColorFormatter(logging.Formatter):
         "ERROR": "\033[91m",   # Red
         "LLMService": "\033[95m", # Magenta
         "TTSService": "\033[95m",
-        "TTSRouter": "\033[95m",
+        "QwenTTS": "\033[95m",
         "APIServer": "\033[96m", # Cyan
         "App": "\033[92m", # Green
         "Electron": "\033[94m", # Blue

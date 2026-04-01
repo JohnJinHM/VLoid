@@ -4,4 +4,13 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "flash-attn",
+    "flash-attn-3",
+    "triton",
+]
+
+[tool.uv.sources]
+flash-attn-3 = { path = "../../Users/jinha/Desktop/Temp/flash_attn_3-3.0.0+cu128torch2.11gite2743ab-cp39-abi3-win_amd64.whl" }
+flash-attn = { path = "../../Users/jinha/Desktop/Temp/flash_attn-2.8.3+cu130torch2.11-cp310-cp310-win_amd64.whl" }
+triton = { path = "../../Users/jinha/Desktop/Temp/triton-3.0.0-cp310-cp310-win_amd64.whl" }

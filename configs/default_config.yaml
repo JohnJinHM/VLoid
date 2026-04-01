@@ -25,6 +25,11 @@ open-webui:
   enabled: false
 
 tts:
+  # Which model to load: "voice_design" (custom voice via text description)
+  # or "voice_clone" (clone a voice from reference audio).
+  # Only one model is loaded at a time.
+  model: "voice_design"
+
   # Local paths to downloaded Qwen3-TTS model directories.
   # Set to a HuggingFace repo ID (e.g. "Qwen/Qwen3-TTS-12Hz-1.7B-Base") to
   # download on first run instead of using a local copy.

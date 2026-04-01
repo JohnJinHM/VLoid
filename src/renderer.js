@@ -3,6 +3,8 @@ import { initChatController } from './js/components/ChatController.js';
 import { initPersonaManager } from './js/components/PersonaEditor.js';
 import { initSettingsPanel } from './js/components/SettingsPanel.js';
 import { initAudioSettings } from './js/components/AudioSettings.js';
+import { api } from './js/api.js';
+import { state } from './js/store.js';
 
 const { ipcRenderer } = require('electron');
 
@@ -34,6 +36,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Tell the main process to show the window now that the backend is ready
     ipcRenderer.send('backend-ready');
+
+    // Fetch TTS model type so the persona editor can show the correct section
+    try {
+        const ttsStatus = await api.getTTSStatus();
+        state.ttsServerModelType = ttsStatus.model_type || 'voice_design';
+    } catch (_) { }
 
     initSessionManager();
     initChatController();
