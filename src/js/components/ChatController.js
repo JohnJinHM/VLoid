@@ -52,6 +52,7 @@ let _isTTSProcessing = false;
 let _ttsSessionAbort = null;
 let _ttsNextStart = 0;          // Web Audio scheduled playback timeline
 let _isFirstChunkInSession = true;
+let _activeTTSPlayBtn = null;   // inline play button currently animating
 
 function _getAudioCtx() {
     if (!_audioCtx || _audioCtx.state === 'closed') {
@@ -87,12 +88,29 @@ function stopTTS() {
     _ttsNextStart = 0;
     _isFirstChunkInSession = true;
 
+    _setTTSPlayBtnPlaying(_activeTTSPlayBtn, false);
+    _activeTTSPlayBtn = null;
+    _setTTSTogglePlaying(false);
+
     // Closing AudioContext is the cleanest way to flush all pending Web Audio buffers.
     if (_audioCtx && _audioCtx.state !== 'closed') {
         _audioCtx.close().catch(() => { });
         _audioCtx = null;
         _gainNode = null;
     }
+}
+
+function _setTTSPlayBtnPlaying(btn, isPlaying) {
+    if (!btn) return;
+    btn.classList.toggle('playing', isPlaying);
+    btn.title = isPlaying ? 'Playing... (click to stop)' : 'Play TTS';
+    btn.innerHTML = isPlaying ? '⏸' : '🔊';
+}
+
+function _setTTSTogglePlaying(isPlaying) {
+    // Only animate when TTS is actively enabled; avoids misleading pulse
+    // when audio is triggered by the play button while TTS toggle is off.
+    if (ttsToggleBtn) ttsToggleBtn.classList.toggle('playing', isPlaying && state.ttsEnabled);
 }
 
 /**
@@ -137,34 +155,12 @@ function _filterTextForTTS(text) {
     return t.trim();
 }
 
-// ── Debug instrumentation ──────────────────────────────────────────
-// Set window._ttsDebug = true in DevTools to enable timing probes.
-// Logs a compact row per scheduled chunk to the console:
-//   [mode] chunk#  durationMs  arrivalGapMs  aheadMs  GAP?
-//
-// Key columns:
-//   arrivalGapMs — wall-clock gap since previous frame arrived at the frontend.
-//                  Spikes here mean the SERVER paused (inter-sentence model reinit).
-//   aheadMs      — (nextStart − ctx.currentTime)*1000 at the moment source.start()
-//                  is called.  Negative values mean a gap HAS already opened in
-//                  the audio timeline — the Math.max fallback fired.
-function _ttsDebugLog(mode, index, durationMs, arrivalGapMs, aheadMs) {
-    if (!window._ttsDebug) return;
-    const gap = aheadMs < 0 ? ' ⚠ GAP' : '';
-    console.log(
-        `[tts/${mode}] #${String(index).padStart(3)} ` +
-        `dur=${durationMs.toFixed(0).padStart(5)}ms  ` +
-        `arrival_gap=${arrivalGapMs.toFixed(0).padStart(6)}ms  ` +
-        `ahead=${aheadMs.toFixed(0).padStart(7)}ms${gap}`
-    );
-}
-// ─────────────────────────────────────────────────────────────────
-
 /**
- * _playNativeStream — plays raw float32 PCM frames from the native streaming endpoints.
- * Wire format:
- *   Header : b'PCM\0' (4) + uint32 BE sample_rate (4) + uint32 BE channels (4)
- *   Frames : uint32 BE byte_length (4) + float32 LE PCM bytes  (repeated)
+ * Streaming audio player: schedules each PCM frame as it arrives from the
+ * HTTP response body.  Designed for live-chat TTS where low first-sound
+ * latency matters more than perfect gaplessness within a sentence.
+ *
+ * Used by processTTSQueue (live chat).
  */
 async function _playNativeStream(res, ctx, abortCtrl) {
     const reader = res.body.getReader();
@@ -174,12 +170,11 @@ async function _playNativeStream(res, ctx, abortCtrl) {
     let headerParsed = false;
 
     let schedulingChain = Promise.resolve();
-    let lastSourcePromise = Promise.resolve();
     let chunkIndex = 0;
-    let lastArrivalTime = performance.now();
 
-    const PRE_BUFFER_MS = 1500;
-    const PCM_MAGIC = 0x50434D00;  // b'PCM\0'
+    const PRE_BUFFER_MS = 150;
+    const SENTENCE_PAUSE_MS = 350;
+    const PCM_MAGIC = 0x50434D00;
 
     while (true) {
         if (abortCtrl.signal.aborted) break;
@@ -211,24 +206,21 @@ async function _playNativeStream(res, ctx, abortCtrl) {
             const pcmBuf = frameSlice.buffer.slice(frameSlice.byteOffset, frameSlice.byteOffset + frameSlice.byteLength);
             const capturedSr = sampleRate;
             const capturedCh = channels;
-
-            const now = performance.now();
-            const arrivalGapMs = now - lastArrivalTime;
-            lastArrivalTime = now;
             const capturedIndex = chunkIndex++;
 
             schedulingChain = schedulingChain.then(() => {
                 if (abortCtrl.signal.aborted) return;
                 const float32 = new Float32Array(pcmBuf);
                 const numFrames = Math.floor(float32.length / capturedCh);
+
+                if (numFrames === 0) return;
+
                 const audioBuf = ctx.createBuffer(capturedCh, numFrames, capturedSr);
                 for (let ch = 0; ch < capturedCh; ch++) {
                     audioBuf.copyToChannel(float32.subarray(ch * numFrames, (ch + 1) * numFrames), ch);
                 }
 
-                const SENTENCE_PAUSE_MS = 400;
                 let when;
-
                 if (_isFirstChunkInSession) {
                     when = ctx.currentTime + (PRE_BUFFER_MS / 1000);
                     _ttsNextStart = when;
@@ -238,18 +230,13 @@ async function _playNativeStream(res, ctx, abortCtrl) {
                         _ttsNextStart += (SENTENCE_PAUSE_MS / 1000);
                     }
 
-                    // Re-buffering
                     if (_ttsNextStart < ctx.currentTime) {
-                        console.warn(`[TTS] 缓冲池枯竭！重新缓冲 ${PRE_BUFFER_MS}ms...`);
-                        when = ctx.currentTime + (PRE_BUFFER_MS / 1000);
+                        when = ctx.currentTime + 0.1;
                         _ttsNextStart = when;
                     } else {
                         when = _ttsNextStart;
                     }
                 }
-
-                const aheadMs = (_ttsNextStart - ctx.currentTime) * 1000;
-                _ttsDebugLog('native', capturedIndex, audioBuf.duration * 1000, arrivalGapMs, aheadMs);
 
                 const source = ctx.createBufferSource();
                 source.buffer = audioBuf;
@@ -260,7 +247,91 @@ async function _playNativeStream(res, ctx, abortCtrl) {
             });
         }
     }
+
     await schedulingChain;
+}
+
+/**
+ * Batch audio player: collects ALL PCM frames from the response body, assembles
+ * them into one AudioBuffer per sentence, then schedules a single AudioBufferSource.
+ * Guarantees gapless within-sentence playback and consistent inter-sentence pause
+ * timing regardless of how long model inference took.
+ *
+ * Used by executeFullTTS (play button).
+ */
+async function _playBatchedAudio(res, ctx, abortCtrl) {
+    const reader = res.body.getReader();
+    let buf = new Uint8Array(0);
+    let sampleRate = null;
+    let channels = null;
+    let headerParsed = false;
+    const pcmChunks = [];
+    let totalFrames = 0;
+    const PCM_MAGIC = 0x50434D00;
+
+    while (true) {
+        if (abortCtrl.signal.aborted) break;
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const merged = new Uint8Array(buf.length + value.length);
+        merged.set(buf);
+        merged.set(value, buf.length);
+        buf = merged;
+
+        if (!headerParsed) {
+            if (buf.length < 12) continue;
+            const hdr = new DataView(buf.buffer.slice(buf.byteOffset, buf.byteOffset + 12));
+            if (hdr.getUint32(0, false) !== PCM_MAGIC) break;
+            sampleRate = hdr.getUint32(4, false);
+            channels = hdr.getUint32(8, false);
+            buf = buf.slice(12);
+            headerParsed = true;
+        }
+
+        while (buf.length >= 4) {
+            const frameLen = new DataView(buf.buffer.slice(buf.byteOffset, buf.byteOffset + 4)).getUint32(0, false);
+            if (buf.length < 4 + frameLen) break;
+            const frameSlice = buf.slice(4, 4 + frameLen);
+            buf = buf.slice(4 + frameLen);
+            const float32 = new Float32Array(
+                frameSlice.buffer.slice(frameSlice.byteOffset, frameSlice.byteOffset + frameSlice.byteLength)
+            );
+            pcmChunks.push(float32);
+            totalFrames += Math.floor(float32.length / channels);
+        }
+    }
+
+    if (totalFrames === 0 || abortCtrl.signal.aborted || !sampleRate) return;
+
+    const audioBuf = ctx.createBuffer(channels, totalFrames, sampleRate);
+    let offset = 0;
+    for (const chunk of pcmChunks) {
+        const numFrames = Math.floor(chunk.length / channels);
+        for (let ch = 0; ch < channels; ch++) {
+            audioBuf.copyToChannel(chunk.subarray(ch * numFrames, (ch + 1) * numFrames), ch, offset);
+        }
+        offset += numFrames;
+    }
+
+    const PRE_BUFFER_MS = 150;
+    const SENTENCE_PAUSE_MS = 350;
+    let when;
+
+    if (_isFirstChunkInSession) {
+        when = ctx.currentTime + (PRE_BUFFER_MS / 1000);
+        _isFirstChunkInSession = false;
+    } else {
+        // Apply sentence pause relative to the end of the last scheduled audio.
+        // Use Math.max to catch up gracefully if inference was slower than real-time.
+        when = Math.max(_ttsNextStart, ctx.currentTime) + (SENTENCE_PAUSE_MS / 1000);
+    }
+
+    const source = ctx.createBufferSource();
+    source.buffer = audioBuf;
+    source.connect(_getGainNode(ctx));
+    source.start(when);
+    _ttsNextStart = when + audioBuf.duration;
 }
 
 // ==========================================
@@ -447,13 +518,16 @@ function renderChatBranch(sessionId) {
 
         if (msg.role === 'assistant') {
             const ttsPlayBtn = document.createElement('button');
-            ttsPlayBtn.style.background = 'none';
-            ttsPlayBtn.style.border = 'none';
-            ttsPlayBtn.style.color = '#5b6ea0';
-            ttsPlayBtn.style.cursor = 'pointer';
+            ttsPlayBtn.className = 'tts-play-btn';
             ttsPlayBtn.innerHTML = '🔊';
             ttsPlayBtn.title = 'Play TTS';
-            ttsPlayBtn.onclick = () => executeFullTTS(msg.content);
+            ttsPlayBtn.onclick = () => {
+                if (ttsPlayBtn.classList.contains('playing')) {
+                    stopTTS();
+                } else {
+                    executeFullTTS(msg.content, ttsPlayBtn);
+                }
+            };
             actionRow.appendChild(ttsPlayBtn);
         }
 
@@ -660,11 +734,6 @@ function createTempMessageDOM(role, content) {
     return div;
 }
 
-
-// ==========================================
-// TTS Queue Consumer & API Caller
-// ==========================================
-
 // ==========================================
 // TTS text-splitting helpers
 // ==========================================
@@ -741,6 +810,10 @@ function _extractLiveChunks(buffer, persona) {
     return { chunks, remaining };
 }
 
+// ==========================================
+// TTS queue and playback
+// ==========================================
+
 function pushToTTSQueue(text) {
     const filtered = _filterTextForTTS(text);
     if (!filtered) return;
@@ -768,6 +841,10 @@ async function _fetchTTS(text, persona) {
     }
 }
 
+/**
+ * Live-chat TTS queue processor.  Processes one sentence at a time using the
+ * streaming player so audio starts as soon as the first PCM frame arrives.
+ */
 async function processTTSQueue() {
     if (_isTTSProcessing || _ttsQueue.length === 0) return;
     _isTTSProcessing = true;
@@ -782,6 +859,8 @@ async function processTTSQueue() {
         return;
     }
 
+    _setTTSTogglePlaying(true);
+
     while (_ttsQueue.length > 0) {
         if (_ttsSessionAbort && _ttsSessionAbort.signal.aborted) break;
 
@@ -794,17 +873,66 @@ async function processTTSQueue() {
             if (err.name !== 'AbortError') console.error('TTS chunk error:', err);
         }
     }
-
-
     _isTTSProcessing = false;
+    _setTTSTogglePlaying(false);
 }
 
-async function executeFullTTS(text) {
+/**
+ * Play button replay: processes a complete pre-existing message using the batch
+ * player so each sentence is a single gapless AudioBuffer.  Runs its own
+ * processing loop (bypasses the queue) and resumes queue processing when done
+ * so any live-chat items enqueued concurrently are not lost.
+ */
+async function executeFullTTS(text, triggerBtn = null) {
     stopTTS();
     _ttsSessionAbort = new AbortController();
+    const sessionAbort = _ttsSessionAbort;  // local ref survives a stopTTS() race
+
+    _activeTTSPlayBtn = triggerBtn;
+    _setTTSPlayBtnPlaying(triggerBtn, true);
+
+    const ctx = _getAudioCtx();
+    if (ctx.state === 'suspended') await ctx.resume();
+    await _applyOutputDevice(ctx);
 
     const persona = state.personasData[state.currentPersonaId];
-    for (const s of _splitTextForReplay(text, persona)) {
-        pushToTTSQueue(s);
+    if (!persona) return;
+
+    _isTTSProcessing = true;
+    try {
+        const filtered = _filterTextForTTS(text);
+        for (const s of _splitTextForReplay(filtered, persona)) {
+            if (sessionAbort.signal.aborted) break;
+            if (!s.trim()) continue;
+            try {
+                const res = await _fetchTTS(s, persona);
+                if (!res || !res.ok) continue;
+                await _playBatchedAudio(res, ctx, sessionAbort);
+            } catch (err) {
+                if (err.name !== 'AbortError') console.error('TTS replay error:', err);
+            }
+        }
+
+        // All PCM is scheduled into the Web Audio timeline but may not have
+        // finished playing yet (fast inference RTF < 1).  Hold the playing state
+        // until the last buffer actually plays out, or until the session is stopped.
+        if (!sessionAbort.signal.aborted && ctx.state !== 'closed') {
+            const remaining = (_ttsNextStart - ctx.currentTime) * 1000;
+            if (remaining > 0) {
+                await new Promise(resolve => {
+                    const timer = setTimeout(resolve, remaining + 50);
+                    sessionAbort.signal.addEventListener('abort', () => {
+                        clearTimeout(timer);
+                        resolve();
+                    }, { once: true });
+                });
+            }
+        }
+    } finally {
+        _isTTSProcessing = false;
+        _setTTSPlayBtnPlaying(_activeTTSPlayBtn, false);
+        _activeTTSPlayBtn = null;
+        // Drain any live-chat items pushed while replay was running.
+        processTTSQueue();
     }
 }

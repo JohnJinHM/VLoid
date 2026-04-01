@@ -374,6 +374,34 @@ textarea:focus,
     pointer-events: none;
 }
 
+/* Playing state — wave paths pulse while audio is rendering */
+@keyframes tts-wave-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.2; }
+}
+
+.tts-toggle-btn.playing .tts-wave-1 {
+    animation: tts-wave-pulse 1.1s ease-in-out infinite;
+}
+
+.tts-toggle-btn.playing .tts-wave-2 {
+    animation: tts-wave-pulse 1.1s ease-in-out infinite;
+    animation-delay: 0.35s;
+}
+
+/* Inline message play button */
+.tts-play-btn {
+    background: none;
+    border: none;
+    color: #5b6ea0;
+    cursor: pointer;
+}
+
+.tts-play-btn.playing {
+    color: var(--tts-active-color) !important;
+    animation: tts-wave-pulse 1.1s ease-in-out infinite;
+}
+
 /* ==================== Settings & Sliders ==================== */
 .param-group {
     display: flex;

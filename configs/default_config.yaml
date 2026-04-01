@@ -28,7 +28,7 @@ tts:
   # Which model to load: "voice_design" (custom voice via text description)
   # or "voice_clone" (clone a voice from reference audio).
   # Only one model is loaded at a time.
-  model: "voice_design"
+  model: "voice_clone"
 
   # Local paths to downloaded Qwen3-TTS model directories.
   # Set to a HuggingFace repo ID (e.g. "Qwen/Qwen3-TTS-12Hz-1.7B-Base") to
@@ -40,3 +40,15 @@ tts:
   device: "cuda"
   # Tensor dtype: "bfloat16" (recommended on CUDA) | "float16" | "float32"
   dtype: "bfloat16"
+
+  # Stream voice_design audio frame-by-frame (lower latency).
+  # Set to false to fall back to generating the full waveform before streaming.
+  voice_design_streaming: true
+
+  # voice_clone streaming frame parameters.
+  # emit_every_frames: how many codec frames to decode before yielding a chunk.
+  # decode_window_frames: lookahead window used by the streaming decoder.
+  # overlap_samples: cross-fade overlap between consecutive chunks (0 = none).
+  emit_every_frames: 12
+  decode_window_frames: 80
+  overlap_samples: 0

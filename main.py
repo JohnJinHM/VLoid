@@ -3,6 +3,8 @@ import sys
 import time
 import urllib.request
 
+
+
 from core.config import load_config
 from core.logger import get_logger
 from modules.vllm import VLLMModule
@@ -12,6 +14,17 @@ from modules.api_server import ApiServerModule
 from modules.electron import ElectronModule
 from modules.qwen_tts import QwenTTSModule
 
+# import os
+# import psutil
+# def elevate_process_priority():
+#     try:
+#         p = psutil.Process(os.getpid())
+#         p.nice(psutil.HIGH_PRIORITY_CLASS)
+#         print("后端进程优先级已提升为 HIGH。")
+#     except Exception as e:
+#         print(f"提升优先级失败: {e}")
+
+# elevate_process_priority()
 
 def _wait_for_ready(host: str, port: int, logger, timeout: int = 600) -> bool:
     """

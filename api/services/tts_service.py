@@ -2,12 +2,16 @@ import io
 import os
 import tempfile
 from threading import Lock
+import wave
 
 import numpy as np
 import torch
 import soundfile as sf
 
 import transformers.utils
+
+import torch._inductor.config
+torch._inductor.config.triton.cudagraph_dynamic_shape_warn_limit = None
 
 torch.set_float32_matmul_precision('high')
 
@@ -73,9 +77,20 @@ class TTSService:
         self.loaded = False
         self._prompt_cache: dict = {}   # (ref_audio_path, ref_text) → prompt vector
 
+        # voice_design: use stream_generate_voice_design when True (default)
+        self._vd_streaming = cfg.get("voice_design_streaming", True)
+
+        # voice_clone: streaming frame parameters (exposed for tuning)
+        self._vc_emit_every_frames   = cfg.get("emit_every_frames",   12)
+        self._vc_decode_window_frames = cfg.get("decode_window_frames", 80)
+        self._vc_overlap_samples     = cfg.get("overlap_samples",      0)
+
         logger.info(
             f"Initializing TTS Service — model_type={self.model_type}, "
-            f"device={self.device}, dtype={dtype_str}"
+            f"device={self.device}, dtype={dtype_str}, "
+            f"vd_streaming={self._vd_streaming}, "
+            f"vc_emit_every_frames={self._vc_emit_every_frames}, "
+            f"vc_decode_window_frames={self._vc_decode_window_frames}"
         )
 
         self._model_kwargs = {
@@ -90,11 +105,62 @@ class TTSService:
             self.model = Qwen3TTSModel.from_pretrained(model_path, **self._model_kwargs)
             self.loaded = True
             logger.info(f"{self.model_type} model loaded successfully.")
+            
             if self.model_type == "voice_clone":
                 self._enable_streaming_opts(self.model)
+                
+                # Warmup
+                logger.info("Starting JIT Compilation & CUDA Graph capture (This will take a few minutes!)...")
+                self._warmup_model()
+                logger.info("Warmup complete.")           
         except Exception as e:
             logger.error(f"Failed to load {self.model_type} model: {e}", exc_info=True)
 
+    def _warmup_model(self):
+        """执行一次虚拟推理，强迫 Triton 提前走完耗时的编译流程"""
+        try:
+            logger.info(f"Starting warmup for {self.model_type}. This will compile CUDA graphs...")
+            
+            if self.model_type == "voice_design":
+                list(self.model.stream_generate_voice_design(
+                    text="Warmup test.",
+                    instruct="",
+                    language="Auto"
+                ))
+                
+            elif self.model_type == "voice_clone":
+                sample_rate = 16000
+                silent_audio = np.zeros(sample_rate, dtype=np.float32)
+                
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+                    tmp_path = tmp_file.name
+                
+                try:
+                    sf.write(tmp_path, silent_audio, sample_rate, format="WAV", subtype="PCM_16")
+                    
+                    prompt = self.model.create_voice_clone_prompt(
+                        ref_audio=tmp_path,
+                        ref_text="warmup",
+                        x_vector_only_mode=False,
+                    )
+                    
+                    list(self.model.stream_generate_voice_clone(
+                        text="Warmup test.",
+                        language="Auto",
+                        voice_clone_prompt=prompt,
+                        emit_every_frames=self._vc_emit_every_frames,
+                        decode_window_frames=self._vc_decode_window_frames,
+                        overlap_samples=self._vc_overlap_samples,
+                    ))
+                finally:
+                    if os.path.exists(tmp_path):
+                        try:
+                            os.unlink(tmp_path)
+                        except OSError:
+                            pass            
+        except Exception as e:
+            logger.warning(f"Warmup failed, first request will be slow: {e}", exc_info=True)
+            
     # ------------------------------------------------------------------
     # Status
     # ------------------------------------------------------------------
@@ -131,18 +197,23 @@ class TTSService:
             yield from self._stream_voice_design(text, instruct, language)
 
     def _stream_voice_design(self, text: str, instruct: str, language: str):
-        # The VoiceDesign model does not have a frame-level streaming API.
-        # generate_voice_design returns the full waveform; yield it as a single chunk
-        # so the caller (and the HTTP streaming endpoint) see the same interface.
-        kwargs = {
-            "text": text,
-            "language": language or "Auto",
-        }
-        if instruct and instruct.strip():
-            kwargs["instruct"] = instruct.strip()
-
-        wavs, sr = self.model.generate_voice_design(**kwargs)
-        yield wavs[0].astype("float32"), sr
+        # stream_generate_voice_design yields (chunk, sr) tuples incrementally,
+        # enabling low-latency playback on the client side.
+        # Fall back to the non-streaming API only when voice_design_streaming=False.
+        if self._vd_streaming:
+            for chunk, sr in self.model.stream_generate_voice_design(
+                text=text,
+                instruct=(instruct or "").strip(),
+                language=language or "Auto",
+            ):
+                yield self._apply_edge_fade(chunk.astype("float32")), sr
+        else:
+            wavs, sr = self.model.generate_voice_design(
+                text=text,
+                instruct=(instruct or "").strip(),
+                language=language or "Auto",
+            )
+            yield wavs[0].astype("float32"), sr
 
     def _stream_voice_clone(
         self, text: str, ref_audio_path: str, ref_text: str, language: str
@@ -150,7 +221,12 @@ class TTSService:
         if not ref_audio_path or not os.path.isfile(ref_audio_path):
             raise RuntimeError(f"Reference audio file not found: '{ref_audio_path}'")
 
-        cache_key = (ref_audio_path, ref_text)
+        # Auto-select mode: ICL (in-context learning) requires ref_text;
+        # fall back to x-vector-only mode when no transcript is available.
+        has_ref_text = bool(ref_text and ref_text.strip())
+        x_vector_only = not has_ref_text
+
+        cache_key = (ref_audio_path, ref_text, x_vector_only)
         if cache_key not in self._prompt_cache:
             audio_data, sr_in = sf.read(ref_audio_path, dtype="float32")
             tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav")
@@ -158,7 +234,9 @@ class TTSService:
             sf.write(tmp_path, audio_data, sr_in, format="WAV", subtype="PCM_16")
             try:
                 prompt = self.model.create_voice_clone_prompt(
-                    ref_audio=tmp_path, ref_text=ref_text
+                    ref_audio=tmp_path,
+                    ref_text=ref_text if has_ref_text else None,
+                    x_vector_only_mode=x_vector_only,
                 )
                 self._prompt_cache[cache_key] = prompt
             finally:
@@ -167,15 +245,17 @@ class TTSService:
                 except OSError:
                     pass
 
+        # if x_vector_only:
+        #     logger.debug("Voice clone: using x-vector-only mode (no ref_text provided)")
+
         prompt = self._prompt_cache[cache_key]
         for chunk, sr in self.model.stream_generate_voice_clone(
             text=text,
             language=language or "Auto",
             voice_clone_prompt=prompt,
-            emit_every_frames=12,
-            decode_window_frames=80,
-            first_chunk_emit_every=5,
-            first_chunk_decode_window=48,
+            emit_every_frames=self._vc_emit_every_frames,
+            decode_window_frames=self._vc_decode_window_frames,
+            overlap_samples=self._vc_overlap_samples,
         ):
             yield self._apply_edge_fade(chunk), sr
 
@@ -184,12 +264,18 @@ class TTSService:
     # ------------------------------------------------------------------
 
     def _enable_streaming_opts(self, model):
-        opts = {"decode_window_frames": 80, "use_compile": False}
-        if self.device == "cuda":
-            opts["compile_mode"] = "reduce-overhead"
+        opts = {
+            "decode_window_frames": 80,
+            "use_compile": True,                 # 核心开关：开启编译
+            "use_cuda_graphs": False,            # reduce-overhead 内部已包含，无需显式开启
+            "compile_mode": "reduce-overhead",   # 启用CUDA Graphs
+            "use_fast_codebook": True,           # 启用快速 Codebook
+            "compile_codebook_predictor": True,  # 编译 Codebook 预测器
+            "compile_talker": True               # 编译主干网络
+        }
         try:
             model.enable_streaming_optimizations(**opts)
-            logger.info("Streaming optimizations enabled.")
+            logger.info("Streaming optimizations (Full CUDA Graphs) enabled successfully.")
         except Exception as e:
             logger.warning(f"Could not enable streaming optimizations: {e}")
 

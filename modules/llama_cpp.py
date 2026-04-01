@@ -38,14 +38,14 @@ class LlamaCppModule(BaseModule):
             try:
                 response = requests.get(health_url)
                 if response.status_code == 200:
-                    self.logger.info("✅ llama.cpp is ready!")
+                    self.logger.info("llama.cpp is ready.")
                     break
             except requests.exceptions.ConnectionError:
                 pass
             time.sleep(3)
             retries += 1
         else:
-            self.logger.error("❌ llama.cpp failed to start within the timeout period.")
+            self.logger.error("llama.cpp failed to start within the timeout period.")
             self.stop()
 
     def stop(self):
