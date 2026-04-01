@@ -163,3 +163,4 @@ configs/local_config.yaml
 *.db
 
 models/
+.claude/
