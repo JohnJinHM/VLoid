@@ -1,33 +1,50 @@
+import threading
 import uvicorn
-import multiprocessing
 from core.module_base import BaseModule
 from core.logger import get_logger
 
 logger = get_logger("APIServer")
 
-def run_server(host: str, port: int):
-    # 使用字符串路径指向 api.app 模块中的 app 实例
-    uvicorn.run("api.app:app", host=host, port=port, log_level="warning")
+
+class _UvicornServer(uvicorn.Server):
+    """
+    Uvicorn subclass that skips signal-handler installation.
+
+    signal.signal() / loop.add_signal_handler() can only be called from the
+    main thread.  When uvicorn runs inside a daemon thread we suppress the
+    installation entirely and let the main thread's shutdown sequence set
+    server.should_exit = True instead.
+    """
+    def install_signal_handlers(self) -> None:
+        pass
+
 
 class ApiServerModule(BaseModule):
     def __init__(self, config):
         super().__init__("APIServer", config)
         self.host = self.config.get("api", {}).get("host", "127.0.0.1")
         self.port = self.config.get("api", {}).get("port", 3000)
-        self.process = None
+        self._server: _UvicornServer | None = None
+        self._thread: threading.Thread | None = None
 
     def start(self):
         logger.info(f"Starting FastAPI server on {self.host}:{self.port}...")
-        # 建议使用 multiprocessing 启动 uvicorn 以避免阻塞主线程
-        self.process = multiprocessing.Process(
-            target=run_server, 
-            args=(self.host, self.port),
-            daemon=True
+        uv_config = uvicorn.Config(
+            "api.app:app", host=self.host, port=self.port, log_level="warning"
         )
-        self.process.start()
+        self._server = _UvicornServer(uv_config)
+        # Daemon thread: exits automatically when the main process exits.
+        # Running uvicorn in the same process avoids the subprocess-spawn
+        # overhead that previously delayed TTS loading by 30-120 s on Windows.
+        self._thread = threading.Thread(
+            target=self._server.run, daemon=True, name="uvicorn"
+        )
+        self._thread.start()
 
     def stop(self):
-        if self.process and self.process.is_alive():
+        if self._server and not self._server.should_exit:
             logger.info("Stopping FastAPI server...")
-            self.process.terminate()
-            self.process.join()
+            self._server.should_exit = True
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=10)
+            logger.info("FastAPI server stopped.")

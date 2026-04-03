@@ -2,8 +2,7 @@ import json
 import sys
 import time
 import urllib.request
-
-
+from concurrent.futures import ThreadPoolExecutor
 
 from core.config import load_config
 from core.logger import get_logger
@@ -14,17 +13,6 @@ from modules.api_server import ApiServerModule
 from modules.electron import ElectronModule
 from modules.qwen_tts import QwenTTSModule
 
-# import os
-# import psutil
-# def elevate_process_priority():
-#     try:
-#         p = psutil.Process(os.getpid())
-#         p.nice(psutil.HIGH_PRIORITY_CLASS)
-#         print("后端进程优先级已提升为 HIGH。")
-#     except Exception as e:
-#         print(f"提升优先级失败: {e}")
-
-# elevate_process_priority()
 
 def _wait_for_ready(host: str, port: int, logger, timeout: int = 600) -> bool:
     """
@@ -64,10 +52,10 @@ def main():
             logger.error(f"Unknown engine type: {engine_type}")
             return
 
-        engine.start()
+        # Add engine to active_modules before start() so the finally block
+        # can always clean it up (BaseModule.stop() guards against None process).
         active_modules.append(engine)
 
-        # Validate TTS config before starting the API server
         tts_module = QwenTTSModule(config)
         tts_module.start()
         active_modules.append(tts_module)
@@ -77,6 +65,8 @@ def main():
             webui.start()
             active_modules.append(webui)
         else:
+            # Start the API server first — this kicks off TTS model loading
+            # inside the FastAPI subprocess so it runs in parallel with the LLM.
             api_server = ApiServerModule(config)
             api_server.start()
             active_modules.append(api_server)
@@ -84,10 +74,18 @@ def main():
         host = config.get("api", {}).get("host", "127.0.0.1")
         port = config.get("api", {}).get("port", 3000)
 
-        ready = _wait_for_ready(host, port, logger)
+        # Load the LLM engine and wait for the TTS model concurrently.
+        # engine.start() blocks in a health-check loop until the LLM subprocess
+        # is ready; _wait_for_ready polls the API server until TTS is loaded.
+        # Running both in a thread pool cuts startup time to max(t_llm, t_tts)
+        # instead of t_llm + t_tts.
+        logger.info("Starting LLM engine and TTS model in parallel...")
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="startup") as pool:
+            engine_future = pool.submit(engine.start)
+            tts_future    = pool.submit(_wait_for_ready, host, port, logger)
+            engine_future.result()       # re-raises any unhandled exception
+            ready = tts_future.result()
 
-        # Start Electron only after the backend is confirmed ready so the
-        # frontend never races against a cold API.
         electron = ElectronModule(config)
         electron.start()
         active_modules.append(electron)
