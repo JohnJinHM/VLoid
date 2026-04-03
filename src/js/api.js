@@ -110,4 +110,10 @@ export const api = {
         const res = await fetch(`${API_BASE}/api/tts/status`);
         return res.json();
     },
+
+    /** Returns { loaded, model, vad_model, device } from the ASR service. */
+    async getASRStatus() {
+        const res = await fetch(`${API_BASE}/api/asr/status`);
+        return res.json();
+    },
 };

@@ -4,7 +4,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routers import chat, personas, sessions
 from api.routers import tts as tts_router
+from api.routers import asr as asr_router
+from api.routers.tts import _tts_executor
+from api.routers.asr import _asr_executor
 from api.services.tts_service import init_tts_service
+from api.services.asr_service import init_asr_service
 from core.logger import get_logger
 
 logger = get_logger("App")
@@ -17,19 +21,21 @@ _ready_event: asyncio.Event | None = None
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """
-    Startup: block until the TTS VoiceDesign model is fully loaded, then set
-    _ready_event so the Electron frontend knows it can show its window.
+    Startup: load TTS and ASR models concurrently, then set _ready_event.
     Shutdown: log teardown (individual services clean up their own resources).
     """
     global _ready_event
     _ready_event = asyncio.Event()
 
-    logger.info("Loading TTS VoiceDesign model — server will be ready once loading completes…")
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, init_tts_service)
+    logger.info("Loading TTS and ASR models concurrently…")
+    await asyncio.gather(
+        loop.run_in_executor(_tts_executor, init_tts_service),
+        loop.run_in_executor(_asr_executor, init_asr_service),
+    )
 
     _ready_event.set()
-    logger.info("TTS model loaded. Server is now fully ready.")
+    logger.info("All models loaded. Server is now fully ready.")
 
     yield
 
@@ -57,6 +63,7 @@ def create_app() -> FastAPI:
     app.include_router(sessions.router)
     app.include_router(personas.router)
     app.include_router(tts_router.router)
+    app.include_router(asr_router.router)
     return app
 
 app = create_app()

@@ -52,3 +52,15 @@ tts:
   emit_every_frames: 12
   decode_window_frames: 80
   overlap_samples: 0
+
+asr:
+  # Local path to the FunASR Nano model directory (must contain model.pt + config.yaml).
+  model_path: "./models/asr/Fun-ASR-Nano-2512"
+  # VAD model: local path or ModelScope model ID (downloaded on first run).
+  vad_model_path: "fsmn-vad"
+  # Inference device: "cuda" | "cpu"
+  device: "cuda"
+  # VAD streaming chunk size in milliseconds (200 ms recommended).
+  vad_chunk_size_ms: 200
+  # Maximum single speech segment length before force-processing (ms).
+  max_segment_ms: 30000

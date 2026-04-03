@@ -27,4 +27,8 @@ export const state = {
     ttsEnabled: false,
     // Model type reported by the server: "voice_design" | "voice_clone"
     ttsServerModelType: 'voice_design',
+    // ASR listening state
+    asrListening: false,
+    // ASR model loaded state (reported by backend on WS connect)
+    asrLoaded: false,
 };

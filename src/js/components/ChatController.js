@@ -10,6 +10,33 @@ const sendBtn = document.getElementById('send-btn');
 const stopBtn = document.getElementById('stop-btn');
 const ttsToggleBtn = document.getElementById('tts-toggle-btn');
 
+/**
+ * Called by ASRController when the backend returns a transcript.
+ * Populates the chat input and immediately submits it.
+ */
+export function handleASRTranscript(text) {
+    if (!text) return;
+    userInput.value = text;
+    userInput.style.height = 'auto';
+    userInput.style.height = userInput.scrollHeight + 'px';
+    handleSendAction();
+}
+
+/**
+ * Called by ASRController when VAD detects speech_start while the AI is
+ * speaking (barge-in).  Immediately stops TTS and aborts any in-progress
+ * LLM generation so the user's new utterance takes over.
+ */
+export function handleASRBargeIn() {
+    // Stop TTS immediately
+    stopTTS();
+    // Abort LLM stream if one is running
+    if (state.abortController) {
+        state.abortController.abort();
+        state.abortController = null;
+    }
+}
+
 export function initChatController() {
     userInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {

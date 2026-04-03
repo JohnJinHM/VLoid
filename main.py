@@ -12,6 +12,7 @@ from modules.llama_cpp import LlamaCppModule
 from modules.api_server import ApiServerModule
 from modules.electron import ElectronModule
 from modules.qwen_tts import QwenTTSModule
+from modules.funasr_asr import FunASRModule
 
 
 def _wait_for_ready(host: str, port: int, logger, timeout: int = 600) -> bool:
@@ -60,6 +61,10 @@ def main():
         tts_module.start()
         active_modules.append(tts_module)
 
+        asr_module = FunASRModule(config)
+        asr_module.start()
+        active_modules.append(asr_module)
+
         if config.get("open-webui", {}).get("enabled", False):
             webui = WebUIModule(config)
             webui.start()
@@ -79,7 +84,6 @@ def main():
         # is ready; _wait_for_ready polls the API server until TTS is loaded.
         # Running both in a thread pool cuts startup time to max(t_llm, t_tts)
         # instead of t_llm + t_tts.
-        logger.info("Starting LLM engine and TTS model in parallel...")
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="startup") as pool:
             engine_future = pool.submit(engine.start)
             tts_future    = pool.submit(_wait_for_ready, host, port, logger)
