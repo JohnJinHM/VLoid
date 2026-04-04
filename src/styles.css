@@ -434,6 +434,33 @@ textarea:focus,
     pointer-events: none;
 }
 
+/* ==================== ASR Live Streaming Bubble ==================== */
+.asr-live-bubble {
+    max-width: 80%;
+    padding: 12px 16px;
+    border-radius: var(--radius-md);
+    border-bottom-right-radius: 0;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    font-size: 0.9rem;
+    align-self: flex-end;
+    background-color: var(--bg-element);
+    border: 1px dashed var(--border-color);
+    opacity: 0.75;
+    color: var(--text-secondary);
+}
+
+.asr-live-bubble::after {
+    content: '▌';
+    margin-left: 1px;
+    animation: asr-cursor-blink 0.7s step-end infinite;
+    color: #e05c5c;
+}
+
+@keyframes asr-cursor-blink {
+    50% { opacity: 0; }
+}
+
 /* ==================== Settings & Sliders ==================== */
 .param-group {
     display: flex;
@@ -488,9 +515,15 @@ input[type="range"] {
     align-items: center;
 }
 
-.switch-group label {
+.switch-group label:not(.switch) {
     font-size: 0.85rem;
     color: var(--text-secondary);
+}
+
+.switch-group-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 }
 
 .switch {

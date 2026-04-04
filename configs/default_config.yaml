@@ -64,3 +64,12 @@ asr:
   vad_chunk_size_ms: 200
   # Maximum single speech segment length before force-processing (ms).
   max_segment_ms: 30000
+  # Set to true to load paraformer-zh-streaming for live partial results during speech.
+  # Requires the streaming model to be downloaded (or will be fetched from ModelScope).
+  use_streaming: false
+  streaming_model_path: "paraformer-zh-streaming"
+  # chunk_size: [left_context, current_chunk, right_context] in 60 ms units.
+  # [0, 10, 5] → 600 ms display window, 300 ms lookahead.
+  streaming_chunk_size: [0, 10, 5]
+  streaming_encoder_lookback: 4
+  streaming_decoder_lookback: 1

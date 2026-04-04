@@ -37,6 +37,49 @@ export function handleASRBargeIn() {
     }
 }
 
+// ------------------------------------------------------------------
+// Live ASR streaming bubble (streaming mode only)
+// ------------------------------------------------------------------
+
+let _liveASRBubble = null;
+
+/**
+ * Insert a temporary "live" bubble at the bottom of the chat that shows
+ * streaming partial ASR text as the user speaks.
+ */
+export function createLiveASRBubble() {
+    // Remove any leftover bubble from a previous utterance
+    _liveASRBubble?.remove();
+
+    const el = document.createElement('div');
+    el.className = 'asr-live-bubble';
+    el.textContent = '';
+    messageContainer.appendChild(el);
+    _liveASRBubble = el;
+    messageContainer.scrollTop = messageContainer.scrollHeight;
+}
+
+/**
+ * Overwrite the live bubble with the latest accumulated partial text.
+ * Each call replaces the previous content (the text grows as chunks arrive).
+ */
+export function appendLiveASRText(text) {
+    if (!_liveASRBubble) return;
+    _liveASRBubble.textContent = text;
+    messageContainer.scrollTop = messageContainer.scrollHeight;
+}
+
+/**
+ * Remove the live bubble and send the final recognised text as a user message.
+ */
+export function commitLiveASRBubble(finalText) {
+    _liveASRBubble?.remove();
+    _liveASRBubble = null;
+    if (finalText) {
+        sendMessage(finalText);
+    }
+}
+
 export function initChatController() {
     userInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {

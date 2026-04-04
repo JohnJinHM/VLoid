@@ -15,14 +15,18 @@ logger = get_logger("ASRService")
 
 class ASRService:
     """
-    Manages FSMN-VAD (streaming voice activity detection) and FunASR Nano
-    (LLM-based ASR) as a single singleton.
+    Manages FSMN-VAD, FunASR Nano (offline), and optionally
+    paraformer-zh-streaming (streaming partial recognition).
 
     Pipeline (per WebSocket connection):
-      1. Audio chunks (float32, 16 kHz, mono) arrive continuously.
-      2. vad_infer(chunk, cache) → list of [beg, end] timing events.
-      3. On speech boundaries, the caller buffers and calls transcribe(pcm).
-      4. transcribe() returns the recognised text string.
+      Non-streaming mode:
+        vad_infer(chunk, cache) detects speech boundaries.
+        transcribe(pcm) runs on the complete buffered utterance after speech_end.
+
+      Streaming mode (requires use_streaming: true in config):
+        vad_infer() still detects boundaries.
+        stream_asr_infer(chunk, cache, is_final) runs every 600 ms during speech,
+        yielding partial text incrementally.
     """
 
     _instance = None
@@ -47,30 +51,36 @@ class ASRService:
         self.vad_chunk_ms   = cfg.get("vad_chunk_size_ms", 200)
         self.max_segment_ms = cfg.get("max_segment_ms", 30000)
 
+        # Streaming ASR config
+        self.use_streaming              = cfg.get("use_streaming", False)
+        self.streaming_model_path       = cfg.get("streaming_model_path", "paraformer-zh-streaming")
+        self.streaming_chunk_size       = cfg.get("streaming_chunk_size", [0, 10, 5])
+        self.streaming_encoder_lookback = cfg.get("streaming_encoder_lookback", 4)
+        self.streaming_decoder_lookback = cfg.get("streaming_decoder_lookback", 1)
+
         device_cfg = cfg.get("device", "cuda")
         try:
-            import torch
             self.device = device_cfg if (device_cfg != "cuda" or torch.cuda.is_available()) else "cpu"
-        except ImportError:
+        except Exception:
             self.device = "cpu"
 
-        # "cuda" → "cuda:0" for AutoModel
         self._device_str = "cuda:0" if self.device == "cuda" else self.device
 
-        self.vad_model = None
-        self.asr_model = None
-        self.loaded    = False
+        self.vad_model       = None
+        self.asr_model       = None
+        self.streaming_model = None
+        self.loaded          = False
 
-        # Serialise ASR inference: the LLM is not thread-safe for concurrent runs
+        # Serialise offline ASR: the LLM is not safe to run concurrently
         self._asr_lock = Lock()
 
         logger.info(
             f"Initializing ASR Service — asr={self.model_path}, "
-            f"vad={self.vad_model_path}, device={self.device}"
+            f"vad={self.vad_model_path}, device={self.device}, "
+            f"streaming={'enabled' if self.use_streaming else 'disabled'}"
         )
 
         try:
-            
             logger.info(f"Loading VAD model: {self.vad_model_path}")
             self.vad_model = AutoModel(
                 model=self.vad_model_path,
@@ -79,16 +89,24 @@ class ASRService:
             )
             logger.info("VAD model loaded.")
 
-            logger.info(f"Loading ASR model: {self.model_path}")
+            logger.info(f"Loading offline ASR model: {self.model_path}")
             self.asr_model = AutoModel(
                 model=self.model_path,
                 device=self._device_str,
             )
-            logger.info("ASR model loaded.")
+            logger.info("Offline ASR model loaded.")
+
+            if self.use_streaming:
+                logger.info(f"Loading streaming ASR model: {self.streaming_model_path}")
+                self.streaming_model = AutoModel(
+                    model=self.streaming_model_path,
+                    device=self._device_str,
+                )
+                logger.info("Streaming ASR model loaded.")
 
             self.loaded = True
 
-            logger.info("Starting ASR/VAD warmup...")
+            logger.info("Starting ASR/VAD warmup…")
             self._warmup()
             logger.info("ASR/VAD warmup complete.")
 
@@ -96,30 +114,41 @@ class ASRService:
             logger.error(f"Failed to load ASR model: {e}", exc_info=True)
 
     def _warmup(self):
-        """Single dummy inference to pre-compile CUDA ops and cache model weights."""
+        """Dummy inferences to pre-compile CUDA ops and load weights into VRAM."""
         try:
-            # VAD warmup: one silent 200 ms chunk
-            silent_chunk = np.zeros(
-                int(self.vad_chunk_ms * 16000 / 1000), dtype=np.float32
-            )
+            # VAD warmup
             cache = {}
             self.vad_model.generate(
-                input=silent_chunk,
+                input=np.zeros(int(self.vad_chunk_ms * 16000 / 1000), dtype=np.float32),
                 cache=cache,
                 is_final=True,
                 chunk_size=self.vad_chunk_ms,
             )
-            logger.info("VAD warmup pass done.")
+            logger.info("VAD warmup done.")
 
-            # ASR warmup: one second of silence
+            # Offline ASR warmup
             self.asr_model.generate(
                 input=torch.zeros(16000, dtype=torch.float32),
                 batch_size=1,
             )
-            logger.info("ASR warmup pass done.")
+            logger.info("Offline ASR warmup done.")
+
+            # Streaming ASR warmup
+            if self.use_streaming and self.streaming_model is not None:
+                chunk_samples = self.streaming_chunk_size[1] * 960  # e.g. 10*960=9600
+                cache_s = {}
+                self.streaming_model.generate(
+                    input=np.zeros(chunk_samples, dtype=np.float32),
+                    cache=cache_s,
+                    is_final=True,
+                    chunk_size=self.streaming_chunk_size,
+                    encoder_chunk_look_back=self.streaming_encoder_lookback,
+                    decoder_chunk_look_back=self.streaming_decoder_lookback,
+                )
+                logger.info("Streaming ASR warmup done.")
 
         except Exception as e:
-            logger.warning(f"ASR/VAD warmup failed (first real request may be slow): {e}")
+            logger.warning(f"Warmup failed (first request may be slow): {e}")
 
     # ------------------------------------------------------------------
     # Status
@@ -127,31 +156,24 @@ class ASRService:
 
     def get_status(self) -> dict:
         return {
-            "loaded":     self.loaded,
-            "model":      self.model_path,
-            "vad_model":  self.vad_model_path,
-            "device":     self.device,
+            "loaded":               self.loaded,
+            "model":                self.model_path,
+            "vad_model":            self.vad_model_path,
+            "device":               self.device,
+            "streaming_available":  self.use_streaming and self.streaming_model is not None,
         }
 
     # ------------------------------------------------------------------
     # Streaming VAD
     # ------------------------------------------------------------------
 
-    def vad_infer(
-        self,
-        pcm_np: np.ndarray,
-        cache: dict,
-        is_final: bool = False,
-    ) -> list:
+    def vad_infer(self, pcm_np: np.ndarray, cache: dict, is_final: bool = False) -> list:
         """
-        Feed one PCM chunk to the streaming FSMN-VAD.
-
-        Returns a (possibly empty) list of [beg, end] pairs in milliseconds
-        (absolute from connection start):
-          [beg, -1]  → speech_start only
-          [-1, end]  → speech_end only
-          [beg, end] → complete speech segment
-          []         → no event
+        Feed one 200 ms PCM chunk to the streaming FSMN-VAD.
+        Returns list of [beg, end] pairs (ms, absolute from session start).
+          [beg, -1]  → speech_start
+          [-1, end]  → speech_end
+          [beg, end] → complete segment
         """
         if not self.loaded or self.vad_model is None:
             return []
@@ -168,26 +190,59 @@ class ASRService:
             return []
 
     # ------------------------------------------------------------------
-    # ASR transcription
+    # Offline ASR transcription (non-streaming mode)
     # ------------------------------------------------------------------
 
     def transcribe(self, pcm_np: np.ndarray) -> str:
-        """
-        Transcribe a complete speech segment (float32, 16 kHz, mono).
-        Thread-safe via internal lock.  Returns "" on failure.
-        """
+        """Transcribe a complete utterance (float32, 16 kHz, mono). Thread-safe."""
         if not self.loaded or self.asr_model is None:
             return ""
         with self._asr_lock:
             try:
-                tensor = torch.from_numpy(pcm_np)
-                res = self.asr_model.generate(input=tensor, batch_size=1)
+                res = self.asr_model.generate(
+                    input=torch.from_numpy(pcm_np),
+                    batch_size=1,
+                )
                 if res and isinstance(res, list) and res[0].get("text"):
                     return res[0]["text"].strip()
                 return ""
             except Exception as e:
                 logger.error(f"ASR transcription error: {e}", exc_info=True)
                 return ""
+
+    # ------------------------------------------------------------------
+    # Streaming ASR (paraformer-zh-streaming)
+    # ------------------------------------------------------------------
+
+    def stream_asr_infer(
+        self,
+        pcm_np: np.ndarray,
+        cache: dict,
+        is_final: bool = False,
+    ) -> str:
+        """
+        Run one streaming ASR step.  Each non-final call expects exactly
+        chunk_size[1]*960 samples (e.g. 9600 for chunk_size=[0,10,5]).
+        The final call (is_final=True) may be shorter; it flushes the model.
+        Returns partial recognised text, or "" if none.
+        """
+        if not self.use_streaming or self.streaming_model is None:
+            return ""
+        try:
+            res = self.streaming_model.generate(
+                input=pcm_np,
+                cache=cache,
+                is_final=is_final,
+                chunk_size=self.streaming_chunk_size,
+                encoder_chunk_look_back=self.streaming_encoder_lookback,
+                decoder_chunk_look_back=self.streaming_decoder_lookback,
+            )
+            if res and res[0].get("text"):
+                return res[0]["text"].strip()
+            return ""
+        except Exception as e:
+            logger.error(f"Streaming ASR error: {e}", exc_info=True)
+            return ""
 
 
 # ------------------------------------------------------------------
