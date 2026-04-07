@@ -26,10 +26,12 @@ export const api = {
         const res = await fetch(`${API_BASE}/api/personas/`);
         const personas = await res.json();
         return personas.map(p => ({
-            id: p.id,
-            name: p.name,
+            id:          p.id,
+            name:        p.name,
+            identity:    p.identity  || '',
+            language:    p.language  || 'en',
             description: p.description,
-            rules: p.rules,
+            rules:       p.rules,
             ttsMode: p.tts_mode || 'voice_design',
             ttsVoiceDesign: {
                 instruct:   p.tts_voice_design?.instruct   || '',
@@ -54,10 +56,12 @@ export const api = {
 
     async savePersona(personaData) {
         const payload = {
-            id: personaData.id,
-            name: personaData.name,
+            id:          personaData.id,
+            name:        personaData.name,
+            identity:    personaData.identity    || '',
+            language:    personaData.language    || 'en',
             description: personaData.description,
-            rules: personaData.rules,
+            rules:       personaData.rules,
             tts_mode: personaData.ttsMode || 'voice_design',
             tts_voice_design: {
                 instruct:   personaData.ttsVoiceDesign?.instruct   || '',
@@ -97,11 +101,12 @@ export const api = {
      * The server dispatches to voice_design or voice_clone based on the loaded model.
      * payload: { text, language, instruct?, ref_audio_path?, ref_text? }
      */
-    async ttsStream(payload) {
+    async ttsStream(payload, signal = null) {
         return fetch(`${API_BASE}/api/tts/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
+            ...(signal ? { signal } : {}),
         });
     },
 

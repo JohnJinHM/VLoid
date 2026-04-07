@@ -1,7 +1,9 @@
-const LS_VOLUME = 'tts_volume';
+const LS_VOLUME   = 'tts_volume';
+const LS_SAVE_BTN = 'tts_save_btn';
 
-const sysPromptInput = document.getElementById('sys-prompt');
-const ragToggle      = document.getElementById('rag-toggle');
+const sysPromptInput  = document.getElementById('sys-prompt');
+const ragToggle       = document.getElementById('rag-toggle');
+const ttsSaveBtnToggle = document.getElementById('tts-save-btn-toggle');
 
 const sliders = {
     temp:   { el: document.getElementById('temp-slider'),   val: document.getElementById('temp-val') },
@@ -32,6 +34,21 @@ export function initSettingsPanel() {
             localStorage.setItem(LS_VOLUME, volumeSlider.value);
         });
     }
+
+    // TTS save button toggle — restore + persist + apply body class immediately
+    if (ttsSaveBtnToggle) {
+        ttsSaveBtnToggle.checked = localStorage.getItem(LS_SAVE_BTN) === 'true';
+        _applyTTSSaveClass(ttsSaveBtnToggle.checked);
+
+        ttsSaveBtnToggle.addEventListener('change', () => {
+            localStorage.setItem(LS_SAVE_BTN, ttsSaveBtnToggle.checked ? 'true' : 'false');
+            _applyTTSSaveClass(ttsSaveBtnToggle.checked);
+        });
+    }
+}
+
+function _applyTTSSaveClass(enabled) {
+    document.body.classList.toggle('tts-save-enabled', enabled);
 }
 
 function _updateVolumeLabel() {

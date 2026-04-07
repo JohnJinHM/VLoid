@@ -44,8 +44,10 @@ class PersonaDB(Base):
     __tablename__ = "personas"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, default="New Persona")
+    identity = Column(Text, default="")          # one-sentence tagline after the name
+    language = Column(String, default="en")      # prompt framing language: en | zh | ja
     description = Column(Text)
-    rules = Column(Text)           # JSON-serialised string
+    rules = Column(Text)           # JSON-serialised [{text, enabled}] array
     # TTS settings
     tts_mode = Column(String, default="voice_design")   # "voice_design" | "voice_clone"
     tts_instruct = Column(Text, default="")             # VoiceDesign: style instruction
@@ -68,6 +70,8 @@ Base.metadata.create_all(bind=engine)
 def _migrate_personas_tts(engine):
     """Add TTS columns to existing personas table if they are missing."""
     new_columns = {
+        "identity":      "TEXT DEFAULT ''",
+        "language":      "VARCHAR DEFAULT 'en'",
         "tts_mode":      "VARCHAR DEFAULT 'voice_design'",
         "tts_instruct":  "TEXT DEFAULT ''",
         "tts_language":  "VARCHAR DEFAULT 'Auto'",

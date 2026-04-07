@@ -118,8 +118,9 @@
       <div class="editor-header">
         <h2>Persona Editor</h2>
         <div class="header-actions">
-          <label for="char-file" class="outline-btn">Import SillyTavern</label>
+          <label for="char-file" class="outline-btn">Import</label>
           <input type="file" id="char-file" accept="image/png, image/webp, application/json" class="hidden">
+          <button id="export-persona-btn" class="outline-btn">Export</button>
         </div>
       </div>
 
@@ -131,6 +132,21 @@
             <label>Name</label>
             <input type="text" id="persona-name" class="form-input" placeholder="Character Name">
           </div>
+        </div>
+
+        <div class="param-group mt-20">
+          <label>Short Identity <span class="param-hint">(one sentence — appears after the name in the system prompt)</span></label>
+          <input type="text" id="persona-identity" class="form-input"
+            placeholder="e.g., a wise elven scholar who lives in the ancient forest">
+        </div>
+
+        <div class="param-group mt-10">
+          <label>Prompt Language <span class="param-hint">(framing language of the system prompt)</span></label>
+          <select id="persona-language" class="form-input form-select">
+            <option value="en">English</option>
+            <option value="zh">Chinese (中文)</option>
+            <option value="ja">Japanese (日本語)</option>
+          </select>
         </div>
 
         <div class="param-group mt-20">
@@ -296,6 +312,17 @@
             <span id="tts-volume-val" class="param-val">100%</span>
           </div>
           <input type="range" id="tts-volume-slider" min="0" max="1" step="0.05" value="1">
+        </div>
+
+        <div class="param-group switch-group">
+          <div class="switch-group-text">
+            <label>Show Audio Save Button</label>
+            <p class="param-hint">Display a save button under each AI message to download its TTS audio as a WAV file.</p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="tts-save-btn-toggle">
+            <span class="slider round"></span>
+          </label>
         </div>
 
       </section>

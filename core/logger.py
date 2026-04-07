@@ -23,6 +23,7 @@ class ColorFormatter(logging.Formatter):
         "ERROR": "\033[91m",   # Red
         "LLMService": "\033[95m", # Magenta
         "TTSService": "\033[95m",
+        "ASRService": "\033[95m",
         "QwenTTS": "\033[95m",
         "APIServer": "\033[96m", # Cyan
         "App": "\033[92m", # Green
@@ -50,6 +51,11 @@ class ColorFormatter(logging.Formatter):
 def get_logger(name):
     logger = logging.getLogger(name)
     
+    # Prevent records from propagating to the root logger (which has its own
+    # handler added by uvicorn/FastAPI), which would cause every message to
+    # appear twice.
+    logger.propagate = False
+
     # Prevent adding multiple handlers if the logger is requested multiple times
     if not logger.handlers:
         logger.setLevel(logging.DEBUG)
@@ -66,4 +72,4 @@ def get_logger(name):
         fh.setFormatter(plain_formatter)
         logger.addHandler(fh)
         
-    return logger
+    return logger 

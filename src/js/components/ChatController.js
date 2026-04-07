@@ -3,6 +3,7 @@ import { state } from '../store.js';
 import { renderSessionList } from './SessionManager.js';
 import { getSettings, getTTSVolume } from './SettingsPanel.js';
 import { getSelectedOutputDevice } from './AudioSettings.js';
+import { buildSystemPrompt } from './PersonaEditor.js';
 
 const messageContainer = document.getElementById('message-container');
 const userInput = document.getElementById('user-input');
@@ -410,10 +411,12 @@ async function _playBatchedAudio(res, ctx, abortCtrl) {
 
 function toggleTTS() {
     state.ttsEnabled = !state.ttsEnabled;
-    // Prime AudioContext during this user gesture so it starts in 'running' state.
     if (state.ttsEnabled) {
+        // Prime AudioContext during this user gesture so it starts in 'running' state.
         const ctx = _getAudioCtx();
         if (ctx.state === 'suspended') ctx.resume();
+    } else {
+        stopTTS();
     }
     updateTTSButtonUI();
 }
@@ -599,6 +602,13 @@ function renderChatBranch(sessionId) {
                 }
             };
             actionRow.appendChild(ttsPlayBtn);
+
+            const ttsSaveBtn = document.createElement('button');
+            ttsSaveBtn.className = 'tts-save-btn';
+            ttsSaveBtn.innerHTML = '💾';
+            ttsSaveBtn.title = 'Save audio as WAV';
+            ttsSaveBtn.onclick = () => _saveTTSAudio(msg.content, ttsSaveBtn);
+            actionRow.appendChild(ttsSaveBtn);
         }
 
         wrapper.appendChild(actionRow);
@@ -687,8 +697,15 @@ async function sendMessage(text, parentIdOverride = undefined) {
     session.currentNodeId = parentId;
     renderChatBranch(sessionId);
 
+    // Build the system prompt fresh at send-time so dynamic injections (RAG,
+    // vision, tools) can be threaded in via the injections parameter later.
+    const currentPersona = state.personasData?.[state.currentPersonaId];
+    const systemPrompt = currentPersona
+        ? buildSystemPrompt(currentPersona)
+        : settings.system_prompt;
+
     const payloadMessages = [
-        { role: 'system', content: settings.system_prompt },
+        { role: 'system', content: systemPrompt },
         ...historyToSend.map(m => ({ role: m.role, content: m.content })),
         { role: 'user', content: text }
     ];
@@ -891,7 +908,7 @@ function pushToTTSQueue(text) {
     processTTSQueue();
 }
 
-async function _fetchTTS(text, persona) {
+async function _fetchTTS(text, persona, signal = null) {
     const modelType = state.ttsServerModelType;
     if (modelType === 'voice_clone') {
         const selectedAudio = (persona.ttsVoiceClone?.refAudios || []).find(a => a.selected);
@@ -901,13 +918,13 @@ async function _fetchTTS(text, persona) {
             language: _normLang(persona.ttsVoiceClone.language),
             ref_audio_path: selectedAudio.path,
             ref_text: selectedAudio.refText || '',
-        });
+        }, signal);
     } else {
         return api.ttsStream({
             text,
             language: _normLang(persona.ttsVoiceDesign.language),
             instruct: persona.ttsVoiceDesign.instruct,
-        });
+        }, signal);
     }
 }
 
@@ -936,7 +953,7 @@ async function processTTSQueue() {
 
         const textChunk = _ttsQueue.shift();
         try {
-            const res = await _fetchTTS(textChunk, persona);
+            const res = await _fetchTTS(textChunk, persona, _ttsSessionAbort?.signal ?? null);
             if (!res || !res.ok) continue;
             await _playNativeStream(res, ctx, _ttsSessionAbort);
         } catch (err) {
@@ -975,7 +992,7 @@ async function executeFullTTS(text, triggerBtn = null) {
             if (sessionAbort.signal.aborted) break;
             if (!s.trim()) continue;
             try {
-                const res = await _fetchTTS(s, persona);
+                const res = await _fetchTTS(s, persona, sessionAbort.signal);
                 if (!res || !res.ok) continue;
                 await _playBatchedAudio(res, ctx, sessionAbort);
             } catch (err) {
@@ -1004,5 +1021,172 @@ async function executeFullTTS(text, triggerBtn = null) {
         _activeTTSPlayBtn = null;
         // Drain any live-chat items pushed while replay was running.
         processTTSQueue();
+    }
+}
+
+// ==========================================
+// TTS → WAV save
+// ==========================================
+
+/**
+ * Decode a TTS streaming response into raw PCM buffers without playing.
+ * Returns { sampleRate, channels, pcmChunks, totalFrames } or null on failure.
+ */
+async function _decodePCMStream(res) {
+    const reader = res.body.getReader();
+    let buf = new Uint8Array(0);
+    let sampleRate = null;
+    let channels = null;
+    let headerParsed = false;
+    const pcmChunks = [];
+    let totalFrames = 0;
+    const PCM_MAGIC = 0x50434D00;
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const merged = new Uint8Array(buf.length + value.length);
+        merged.set(buf);
+        merged.set(value, buf.length);
+        buf = merged;
+
+        if (!headerParsed) {
+            if (buf.length < 12) continue;
+            const hdr = new DataView(buf.buffer.slice(buf.byteOffset, buf.byteOffset + 12));
+            if (hdr.getUint32(0, false) !== PCM_MAGIC) break;
+            sampleRate = hdr.getUint32(4, false);
+            channels   = hdr.getUint32(8, false);
+            buf = buf.slice(12);
+            headerParsed = true;
+        }
+
+        while (buf.length >= 4) {
+            const frameLen = new DataView(buf.buffer.slice(buf.byteOffset, buf.byteOffset + 4)).getUint32(0, false);
+            if (buf.length < 4 + frameLen) break;
+            const frameSlice = buf.slice(4, 4 + frameLen);
+            buf = buf.slice(4 + frameLen);
+            const float32 = new Float32Array(
+                frameSlice.buffer.slice(frameSlice.byteOffset, frameSlice.byteOffset + frameSlice.byteLength)
+            );
+            pcmChunks.push(float32);
+            totalFrames += Math.floor(float32.length / channels);
+        }
+    }
+
+    if (totalFrames === 0 || !sampleRate) return null;
+    return { sampleRate, channels, pcmChunks, totalFrames };
+}
+
+/**
+ * Encode planar float32 PCM chunks into a standard 16-bit PCM WAV ArrayBuffer.
+ * Each chunk is planar: [ch0_f0…ch0_fN, ch1_f0…ch1_fN, …]
+ */
+function _encodeWAV(channels, sampleRate, pcmChunks, totalFrames) {
+    const numSamples = totalFrames * channels;
+    const dataBytes  = numSamples * 2;             // 16-bit = 2 bytes/sample
+    const buffer     = new ArrayBuffer(44 + dataBytes);
+    const view       = new DataView(buffer);
+
+    const s = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+
+    // RIFF chunk
+    s(0, 'RIFF');
+    view.setUint32(4,  36 + dataBytes, true);
+    s(8, 'WAVE');
+    // fmt  sub-chunk
+    s(12, 'fmt ');
+    view.setUint32(16, 16, true);                          // sub-chunk size
+    view.setUint16(20, 1,  true);                          // PCM format
+    view.setUint16(22, channels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * channels * 2, true);   // byte rate
+    view.setUint16(32, channels * 2, true);                // block align
+    view.setUint16(34, 16, true);                          // bits per sample
+    // data sub-chunk
+    s(36, 'data');
+    view.setUint32(40, dataBytes, true);
+
+    // Interleave channels and convert float32 → int16 LE
+    let off = 44;
+    for (const chunk of pcmChunks) {
+        const n = Math.floor(chunk.length / channels);
+        for (let f = 0; f < n; f++) {
+            for (let ch = 0; ch < channels; ch++) {
+                const s = Math.max(-1, Math.min(1, chunk[ch * n + f]));
+                view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+                off += 2;
+            }
+        }
+    }
+
+    return buffer;
+}
+
+/** Derive a safe filename from the first 60 chars of the message text. */
+function _textToWavFilename(text) {
+    return text
+        .replace(/<[^>]{0,200}>/g, '')          // strip tags
+        .replace(/[\\/:*?"<>|]/g, '')            // strip illegal filename chars
+        .replace(/\s+/g, '_')
+        .slice(0, 60)
+        .replace(/_+$/, '')                      // trim trailing underscores
+        || 'tts_audio';
+}
+
+/**
+ * Re-synthesise the TTS audio for a message and trigger a WAV download.
+ * Uses the same sentence splitting and fetch path as the play button so the
+ * output is identical to what the user heard.
+ */
+async function _saveTTSAudio(text, btn) {
+    if (btn.dataset.saving === 'true') return;
+
+    btn.dataset.saving = 'true';
+    btn.classList.add('saving');
+    btn.title = 'Generating…';
+
+    try {
+        const persona = state.personasData?.[state.currentPersonaId];
+        if (!persona) return;
+
+        const filtered = _filterTextForTTS(text);
+        if (!filtered) return;
+
+        const allChunks = [];
+        let sampleRate = null;
+        let channels   = null;
+        let totalFrames = 0;
+
+        for (const sentence of _splitTextForReplay(filtered, persona)) {
+            if (!sentence.trim()) continue;
+            const res = await _fetchTTS(sentence, persona);
+            if (!res || !res.ok) continue;
+            const decoded = await _decodePCMStream(res);
+            if (!decoded) continue;
+            if (sampleRate === null) {
+                sampleRate = decoded.sampleRate;
+                channels   = decoded.channels;
+            }
+            allChunks.push(...decoded.pcmChunks);
+            totalFrames += decoded.totalFrames;
+        }
+
+        if (totalFrames === 0 || !sampleRate) return;
+
+        const wavBuffer = _encodeWAV(channels, sampleRate, allChunks, totalFrames);
+        const blob = new Blob([wavBuffer], { type: 'audio/wav' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = _textToWavFilename(text) + '.wav';
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        console.error('TTS save error:', err);
+    } finally {
+        btn.dataset.saving = 'false';
+        btn.classList.remove('saving');
+        btn.title = 'Save audio as WAV';
     }
 }

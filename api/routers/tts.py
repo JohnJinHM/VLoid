@@ -1,6 +1,7 @@
 import asyncio
 import os
 import struct
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -96,6 +97,7 @@ async def tts_stream(req: TTSStreamRequest, svc: TTSService = Depends(require_tt
 
     loop = asyncio.get_running_loop()
     q: asyncio.Queue = asyncio.Queue()
+    cancelled = threading.Event()
 
     def _produce():
         try:
@@ -106,6 +108,8 @@ async def tts_stream(req: TTSStreamRequest, svc: TTSService = Depends(require_tt
                 ref_audio_path=req.ref_audio_path,
                 ref_text=req.ref_text,
             ):
+                if cancelled.is_set():
+                    break
                 loop.call_soon_threadsafe(q.put_nowait, (chunk, sr))
         except Exception as e:
             logger.error(f"/stream error: {e}", exc_info=True)
@@ -115,14 +119,19 @@ async def tts_stream(req: TTSStreamRequest, svc: TTSService = Depends(require_tt
     async def generate():
         _tts_executor.submit(_produce)
         header_sent = False
-        while True:
-            item = await q.get()
-            if item is _STREAM_DONE:
-                break
-            chunk, sr = item
-            if not header_sent:
-                yield _pcm_header(sr, 1)
-                header_sent = True
-            yield _pcm_frame(chunk)
+        try:
+            while True:
+                item = await q.get()
+                if item is _STREAM_DONE:
+                    break
+                chunk, sr = item
+                if not header_sent:
+                    yield _pcm_header(sr, 1)
+                    header_sent = True
+                yield _pcm_frame(chunk)
+        finally:
+            # Fires on normal completion, client disconnect, or server abort.
+            # Signals the producer thread to stop iterating at the next chunk boundary.
+            cancelled.set()
 
     return StreamingResponse(generate(), media_type="application/octet-stream")

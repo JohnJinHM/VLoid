@@ -77,9 +77,6 @@ class TTSService:
         self.loaded = False
         self._prompt_cache: dict = {}   # (ref_audio_path, ref_text) → prompt vector
 
-        # voice_design: use stream_generate_voice_design when True (default)
-        self._vd_streaming = cfg.get("voice_design_streaming", True)
-
         # voice_clone: streaming frame parameters (exposed for tuning)
         self._vc_emit_every_frames   = cfg.get("emit_every_frames",   12)
         self._vc_decode_window_frames = cfg.get("decode_window_frames", 80)
@@ -88,7 +85,6 @@ class TTSService:
         logger.info(
             f"Initializing TTS Service — model_type={self.model_type}, "
             f"device={self.device}, dtype={dtype_str}, "
-            f"vd_streaming={self._vd_streaming}, "
             f"vc_emit_every_frames={self._vc_emit_every_frames}, "
             f"vc_decode_window_frames={self._vc_decode_window_frames}"
         )
@@ -123,12 +119,12 @@ class TTSService:
             logger.info(f"Starting warmup for {self.model_type}. This will compile CUDA graphs...")
             
             if self.model_type == "voice_design":
-                list(self.model.stream_generate_voice_design(
+                self.model.generate_voice_design(
                     text="Warmup test.",
                     instruct="",
-                    language="Auto"
-                ))
-                
+                    language="Auto",
+                )
+
             elif self.model_type == "voice_clone":
                 sample_rate = 16000
                 silent_audio = np.zeros(sample_rate, dtype=np.float32)
@@ -216,23 +212,12 @@ class TTSService:
             yield from self._stream_voice_design(text, instruct, language)
 
     def _stream_voice_design(self, text: str, instruct: str, language: str):
-        # stream_generate_voice_design yields (chunk, sr) tuples incrementally,
-        # enabling low-latency playback on the client side.
-        # Fall back to the non-streaming API only when voice_design_streaming=False.
-        if self._vd_streaming:
-            for chunk, sr in self.model.stream_generate_voice_design(
-                text=text,
-                instruct=(instruct or "").strip(),
-                language=language or "Auto",
-            ):
-                yield self._apply_edge_fade(chunk.astype("float32")), sr
-        else:
-            wavs, sr = self.model.generate_voice_design(
-                text=text,
-                instruct=(instruct or "").strip(),
-                language=language or "Auto",
-            )
-            yield wavs[0].astype("float32"), sr
+        wavs, sr = self.model.generate_voice_design(
+            text=text,
+            instruct=(instruct or "").strip(),
+            language=language or "Auto",
+        )
+        yield wavs[0].astype("float32"), sr
 
     def _stream_voice_clone(
         self, text: str, ref_audio_path: str, ref_text: str, language: str

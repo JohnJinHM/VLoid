@@ -41,10 +41,6 @@ tts:
   # Tensor dtype: "bfloat16" (recommended on CUDA) | "float16" | "float32"
   dtype: "bfloat16"
 
-  # Stream voice_design audio frame-by-frame (lower latency).
-  # Set to false to fall back to generating the full waveform before streaming.
-  voice_design_streaming: true
-
   # voice_clone streaming frame parameters.
   # emit_every_frames: how many codec frames to decode before yielding a chunk.
   # decode_window_frames: lookahead window used by the streaming decoder.

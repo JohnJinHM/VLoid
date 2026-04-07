@@ -14,6 +14,11 @@ router = APIRouter(prefix="/api/personas", tags=["Personas"])
 # Schemas
 # ------------------------------------------------------------------
 
+class Rule(BaseModel):
+    text: str = ""
+    enabled: bool = True
+
+
 class TTSVoiceDesign(BaseModel):
     instruct: str = ""
     language: str = "Auto"
@@ -37,8 +42,10 @@ class TTSVoiceClone(BaseModel):
 class PersonaSchema(BaseModel):
     id: str
     name: str
-    description: str
-    rules: List[str]
+    identity: str = ""             # one-sentence tagline after the name
+    language: str = "en"           # prompt framing language: en | zh | ja
+    description: str = ""
+    rules: List[Rule] = []
     tts_mode: Optional[str] = "voice_design"
     tts_voice_design: Optional[TTSVoiceDesign] = None
     tts_voice_clone: Optional[TTSVoiceClone] = None
@@ -49,10 +56,6 @@ class PersonaSchema(BaseModel):
 # ------------------------------------------------------------------
 
 def _check_audio_exists(path: str) -> bool:
-    """
-    Check whether the reference audio file still exists.
-    *path* is now an absolute OS path stored by the Electron client.
-    """
     return bool(path) and os.path.isfile(path)
 
 
@@ -68,20 +71,33 @@ def _row_to_dict(p: PersonaDB) -> dict:
         entry["exists"] = _check_audio_exists(entry.get("path", ""))
         ref_audios.append(entry)
 
+    # rules are stored as [{text, enabled}]; migrate old string[] transparently
+    try:
+        rules_raw = json.loads(p.rules) if p.rules else []
+    except (json.JSONDecodeError, TypeError):
+        rules_raw = []
+
+    rules = [
+        r if isinstance(r, dict) else {"text": r, "enabled": True}
+        for r in rules_raw
+    ]
+
     return {
-        "id": str(p.id),
-        "name": p.name,
-        "description": p.description,
-        "rules": json.loads(p.rules) if p.rules else [],
-        "tts_mode": p.tts_mode or "voice_design",
+        "id":          str(p.id),
+        "name":        p.name,
+        "identity":    p.identity  or "",
+        "language":    p.language  or "en",
+        "description": p.description or "",
+        "rules":       rules,
+        "tts_mode":    p.tts_mode or "voice_design",
         "tts_voice_design": {
-            "instruct":    p.tts_instruct or "",
-            "language":    p.tts_language or "Auto",
-            "split_mode":  p.tts_vd_split_mode or "sentence",
+            "instruct":   p.tts_instruct     or "",
+            "language":   p.tts_language     or "Auto",
+            "split_mode": p.tts_vd_split_mode or "sentence",
         },
         "tts_voice_clone": {
             "ref_audios":  ref_audios,
-            "language":    p.tts_vc_language or "Auto",
+            "language":    p.tts_vc_language  or "Auto",
             "split_chars": p.tts_vc_split_chars or 0,
         },
     }
@@ -108,20 +124,24 @@ def save_persona(persona: PersonaSchema, db: Session = Depends(get_db)):
     vc = persona.tts_voice_clone  or TTSVoiceClone()
 
     # Serialise ref_audios; strip runtime-only 'exists' field before storing
-    ref_audio_entries = []
-    for e in vc.ref_audios:
-        ref_audio_entries.append({
+    ref_audio_entries = [
+        {
             "id":       e.id,
             "filename": e.filename,
             "path":     e.path,
             "ref_text": e.ref_text,
             "selected": e.selected,
-        })
+        }
+        for e in vc.ref_audios
+    ]
 
-    rules_json = json.dumps(persona.rules)
+    # Serialise rules as [{text, enabled}] objects
+    rules_json = json.dumps([{"text": r.text, "enabled": r.enabled} for r in persona.rules])
 
     fields = dict(
         name=persona.name,
+        identity=persona.identity,
+        language=persona.language,
         description=persona.description,
         rules=rules_json,
         tts_mode=tts_mode,
